@@ -1,0 +1,6 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/AnyEvent-Pg.t
+lib/AnyEvent/Pg.pm
