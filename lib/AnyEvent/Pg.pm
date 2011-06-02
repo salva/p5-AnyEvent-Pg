@@ -20,7 +20,7 @@ sub _check_state {
     croak "$upsub can not be called in state $state";
 }
 
-sub _ensure_list { ref $_[0] ? @{$_[0]} : $_[0] }
+sub _ensure_list { ref $_[0] ? @{$_[0]} : $_[0]  }
 
 
 sub new {
@@ -29,13 +29,21 @@ sub new {
     my $on_connect = delete $opts{on_connect};
     my $on_connect_error = delete $opts{on_connect_error};
     my $on_empty_queue = delete $opts{on_empty_queue};
+    my $on_notify = delete $opts{on_notify};
+    my $on_error = delete $opts{on_error};
+
+    %opts and croak "unknown option(s) ".join(", ", keys %opts)." found";
 
     my $dbc = Pg::PQ::Conn->start($conninfo);
+    # $dbc->trace(\*STDERR);
     # FIXME: $dbc may be undef
     my $self = { state => 'connecting',
                  dbc => $dbc,
                  on_connect => $on_connect,
                  on_connect_error => $on_connect_error,
+                 on_error => $on_error,
+                 on_empty_queue => $on_empty_queue,
+                 on_notify => $on_notify,
                  queries => [],
                };
     bless $self, $class;
@@ -48,13 +56,12 @@ sub new {
 sub dbc { shift->{dbc} }
 
 sub _connectPoll {
+    # warn "_connectPoll";
     my $self = shift;
     my $dbc = $self->{dbc};
     my $fd = $self->{fd};
 
-    say "_connectPoll";
-
-    my $r;
+    my ($r, $goto, $rw, $ww);
     if (defined $fd) {
         $r = $dbc->connectPoll;
     }
@@ -63,32 +70,25 @@ sub _connectPoll {
         $r = PGRES_POLLING_WRITING;
     }
 
-    say $r;
-
-    my $goto;
-    my $rw;
-    my $ww;
-
     given ($r) {
         when (PGRES_POLLING_READING) {
             $rw = $self->{read_watcher} // AE::io $fd, 0, sub { $self->_connectPoll };
-            say "fd: $fd, read_watcher: $rw";
+            # say "fd: $fd, read_watcher: $rw";
         }
         when (PGRES_POLLING_WRITING) {
-            $ww = $self->{write_watcher} // AE::io $fd, 1, sub { say "can write"; $self->_connectPoll };
-            say "fd: $fd, write_watcher: $ww";
+            $ww = $self->{write_watcher} // AE::io $fd, 1, sub { $self->_connectPoll };
+            # say "fd: $fd, write_watcher: $ww";
         }
         when (PGRES_POLLING_FAILED) {
             $goto = '_on_connect_error';
         }
-        when (PGRES_POLLING_OK) {
+        when ([PGRES_POLLING_OK, PGRES_POLLING_ACTIVE]) {
             $goto = '_on_connect';
         }
     }
     $self->{read_watcher} = $rw;
     $self->{write_watcher} = $ww;
-    no warnings 'uninitialized';
-    say "read_watcher: $rw, write_watcher: $ww";
+    # warn "read_watcher: $rw, write_watcher: $ww";
 
     $self->$goto if $goto;
 }
@@ -109,22 +109,92 @@ sub _on_connect {
 
 sub _on_connect_error {
     my $self = shift;
-    $self->{state} = 'failed';
+    _call_back($self->{on_connect_error}, $self);
+    $self->_on_fatal_error;
 }
 
-sub push_query {
+sub fail { shift->_on_fatal_error }
+
+sub _on_fatal_error {
     my $self = shift;
-    $self->_check_state('connecting', 'connected');
-    push @{$self->{queries}}, { @_ };
-    $self->_on_push_query if $self->{state} eq 'connected';
+    $self->{state} = 'failed';
+    undef $self->{write_watcher};
+    undef $self->{read_watcher};
+    _call_back($self->{on_error}, $self, 1);
+    my $cq = delete $self->{current_query};
+    $cq and _call_back($cq->{on_error}, $self);
+    my $queue = $self->{queue};
+    _call_back($_->{on_error}, $self) for @$queue;
+    @$queue = ();
 }
+
+my %valid_push_args = map { $_ => 1 } qw(query on_result on_error on_done);
+my %valid_push_query_args = (%valid_push_args, query => 1);
+my %valid_push_prepared_query_args = (%valid_push_args, prepared => 1);
+
+sub _validate_push_args {
+    my ($valid, $query) = @_;
+    for (keys %$query) {
+        croak "invalid parameter $_" unless $valid->{$_};
+    }
+}
+
+sub _push_query {
+    my ($self, %opts) = @_;
+    my %query;
+    my $unshift = delete $opts{_unshift};
+    my $type = $query{type} = delete $opts{_type};
+    $query{$_} = delete $opts{$_} for qw(on_result on_error on_done);
+    given ($type) {
+        when ('query') {
+            my $query = delete $opts{query};
+            my $args = delete $opts{args};
+            $query{args} = [_ensure_list($query), ($args ? @$args : ())];
+        }
+        when ('query_prepared') {
+            my $name = delete $opts{name} // croak "name argument missing";
+            my $args = delete $opts{args};
+            $query{args} = [_ensure_list($name), ($args ? @$args : ())];
+        }
+        when ('prepare') {
+            my $name = delete $opts{name} // croak "name argument missing";
+            my $query = delete $opts{query} // croak "query argument missing";
+            $query{args} = [$name, $query];
+        }
+        default {
+            die "internal error: unknown push_query type $_";
+        }
+    }
+    %opts and croak "unsuported option(s) ".join(", ", keys %opts);
+
+    if ($unshift) {
+        unshift @{$self->{queries}}, \%query;
+    }
+    else {
+        push @{$self->{queries}}, \%query;
+    }
+}
+
+sub push_query { shift->_push_query(_type => 'query', @_) }
+
+sub push_query_prepared { shift->_push_query(_type => 'query_prepared', @_) }
+
+sub push_prepare { shift->_push_query(_type => 'prepare', @_) }
+
+sub unshift_query { shift->_push_query(_type => 'query', _unshift => 1, @_) }
 
 sub _on_push_query {
     my $self = shift;
-    unless ($self->{current_query}) {
+    # warn "_on_push_query";
+    if ($self->{current_query}) {
+        # warn "there is already a query queued";
+    }
+    else {
         my $queries = $self->{queries};
+        # warn scalar(@$queries)." queries queued";
         if (@$queries) {
             $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
+            # warn "waiting for writable";
         }
         else {
             _call_back($self->{on_empty_queue}, $self);
@@ -132,37 +202,84 @@ sub _on_push_query {
     }
 }
 
+my %send_type2method = (query => 'sendQuery',
+                        query_prepared => 'sendQueryPrepared',
+                        prepare => 'sendPrepare' );
+
 sub _on_push_query_writable {
     my $self = shift;
-    delete $self->{write_watcher};
-
+    # warn "_on_push_query_writable";
+    undef $self->{write_watcher};
+    $self->{current_query} and die "Internal error: _on_push_query_writable called when there is already a current query";
     my $dbc = $self->{dbc};
     my $query = shift @{$self->{queries}};
-    my $r = $dbc->sendQuery(_ensure_list $query->{query});
-    if ($r) {
+    # warn "sendQuery('" . join("', '", @query) . "')";
+    my $method = $send_type2method{$query->{type}} //
+        die "internal error: no method defined for push type $query->{type}";
+    if ($dbc->$method(@{$query->{args}})) {
         $self->{current_query} = $query;
-        $self->_on_consume_input;
+        $self->_on_push_query_flushable;
     }
     else {
+        warn "$method failed: ". $dbc->errorMessage;
         _call_back($query->{on_error}, $self);
+        # FIXME: check if the error is recoverable or fatal before continuing...
         $self->_on_push_query
+    }
+}
+
+sub _on_push_query_flushable {
+    my $self = shift;
+    my $dbc = $self->{dbc};
+    my $ww = delete $self->{write_watcher};
+    given ($dbc->flush) {
+        when (-1) {
+            $self->_on_fatal_error;
+        }
+        when (0) {
+            $self->_on_consume_input;
+        }
+        when (1) {
+            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, sub { $self->_on_push_query_flushable };
+        }
+        default {
+            die "internal error: flush returned $_";
+        }
     }
 }
 
 sub _on_consume_input {
     my $self = shift;
     my $dbc = $self->{dbc};
-    $dbc->consumeInput;
-    if ($dbc->busy) {
-        $self->{consume_input_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input }
+    $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
+    unless ($dbc->consumeInput) {
+        _call_back($self->{on_error}, $self);
     }
-    else {
-        delete $self->{consume_input_watcher};
-        my $result = $dbc->result;
-        _call_back($self->{current_query}{on_result}, $self, $result);
-        undef $self->{current_query};
-        $self->_on_push_query;
+    while (1) {
+        if ($dbc->busy) {
+            $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
+            return;
+        }
+        else {
+            my $result = $dbc->result;
+            if ($result) {
+                # warn "result readed";
+                _call_back($self->{current_query}{on_result}, $self, $result);
+            }
+            else {
+                _call_back($self->{current_query}{on_done}, $self);
+                undef $self->{read_watcher};
+                undef $self->{current_query};
+                $self->_on_push_query;
+                return;
+            }
+        }
     }
+}
+
+sub destroy {
+    my $self = shift;
+    %$self = ();
 }
 
 1;
@@ -178,42 +295,97 @@ AnyEvent::Pg - Query a PostgreSQL database asynchronously
   my $db = AnyEvent::Pg->new("dbname=foo",
                              on_connect => sub { ... });
 
+  $db->push_query(query => 'insert into foo (id, name) values(7, \'seven\')',
+                  on_result => sub { ... },
+                  on_error => sub { ... } );
+
+  # Note that $1, $2, etc. are Pg placeholders, nothing to do with
+  # Perl regexp captures!
+
+  $db->push_query(query => ['insert into foo (id, name) values($1, $2)', 7, 'seven']
+                  on_result => sub { ... }, ...);
+
+  $db->push_prepare(name => 'insert_into_foo',
+                    query => 'insert into foo (id, name) values($1, $2)',
+                    on_result => sub { ... }, ...);
+
+  $db->push_query_prepared(name => 'insert_into_foo',
+                           args => [7, 'seven'],
+                           on_result => sub { ... }, ...);
+
 =head1 DESCRIPTION
 
-Stub documentation for AnyEvent::Pg, created by h2xs. It looks like the
-author of the extension was negligent enough to leave the stub
-unedited.
+This library allows to query PostgreSQL databases asynchronously. It
+is a thin layer on top of Pg::PQ that integrates it inside the
+AnyEvent framework.
 
-Blah blah blah.
+=head2 API
 
-=head2 EXPORT
+The following methods are available from the AnyEvent::Pg package:
 
-None by default.
+=over 4
 
+=item $adb = AnyEvent::Pg->new($conninfo, %opts)
 
+Creates and starts the connection to the database. C<$conninfo>
+contains the parameters defining how to connect to the database (see
+libpq C<PQconnectdbParams> and C<PQconnectdb> documentation for the
+details:
+L<http://www.postgresql.org/docs/9.0/interactive/libpq-connect.html>).
+
+=item $adb->push_query(%opts)
+
+Pushes a query into the object queue that will eventually be
+dispatched to the database.
+
+The accepted options are:
+
+=over
+
+=item query => $sql_query
+
+The SQL query to be passed to the database
+
+=item query => [$sql_query, @args]
+
+A SQL query with placeholders ($1, $2, $3, etc.) and the arguments.
+
+=item args => \@args
+
+An alternative way to pass the arguments to a SQL query with placeholders.
+
+=item on_error => sub { ... }
+
+# WORKING HERE!!!
+
+=back
+
+=item $adb->push_prepare(%opts)
+
+=item $adb->push_query_prepared(%opts)
+
+=item $adb->unshift_query(%opts)
+
+=item $adb->fail
+
+=item $adb->destroy
+
+=back
 
 =head1 SEE ALSO
 
-Mention other useful documentation such as the documentation of
-related modules or operating system documentation (such as man pages
-in UNIX), or any relevant external documentation such as RFCs or
-standards.
-
-If you have a mailing list set up for your module, mention it here.
-
-If you have a web site set up for your module, mention it here.
+L<Pg::PQ>, L<AnyEvent>.
 
 =head1 AUTHOR
 
-Salvador Fandino, E<lt>salva@E<gt>
+Salvador FandiE<ntilde>o, E<lt>sfandino@yahoo.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2011 by Salvador Fandino
+Copyright (C) 2011 by Qindel FormaciE<oacute>n y Servicios S.L.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
 at your option, any later version of Perl 5 you may have available.
-
 
 =cut
