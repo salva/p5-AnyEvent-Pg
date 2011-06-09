@@ -128,17 +128,6 @@ sub _on_fatal_error {
     @$queue = ();
 }
 
-my %valid_push_args = map { $_ => 1 } qw(query on_result on_error on_done);
-my %valid_push_query_args = (%valid_push_args, query => 1);
-my %valid_push_prepared_query_args = (%valid_push_args, prepared => 1);
-
-sub _validate_push_args {
-    my ($valid, $query) = @_;
-    for (keys %$query) {
-        croak "invalid parameter $_" unless $valid->{$_};
-    }
-}
-
 sub _push_query {
     my ($self, %opts) = @_;
     my %query;
@@ -316,12 +305,12 @@ AnyEvent::Pg - Query a PostgreSQL database asynchronously
 =head1 DESCRIPTION
 
 This library allows to query PostgreSQL databases asynchronously. It
-is a thin layer on top of Pg::PQ that integrates it inside the
-AnyEvent framework.
+is a thin layer on top of L<Pg::PQ> that integrates it inside the
+L<AnyEvent> framework.
 
 =head2 API
 
-The following methods are available from the AnyEvent::Pg package:
+The following methods are available from the AnyEvent::Pg class:
 
 =over 4
 
@@ -356,11 +345,53 @@ An alternative way to pass the arguments to a SQL query with placeholders.
 
 =item on_error => sub { ... }
 
-# WORKING HERE!!!
+The given callback will be called when the query processing fails for
+any reason.
+
+=item on_result => sub { ... }
+
+The given callback will be called for every result returned for the
+given query.
+
+You should expect one result object for every SQL statment on the
+query.
+
+The callback will receive as its arguments the AnyEvent::Pg and the
+L<Pg::PQ::Result> object.
+
+=item on_done => sub { ... }
+
+This callback will be run after the last result from the query is
+processed. The AnyEvent::Pg object is passed as an argument.
 
 =back
 
 =item $adb->push_prepare(%opts)
+
+Queues a query prepare operation for execution.
+
+The accepted options are:
+
+=over
+
+=item name => $name
+
+Name of the prepared query.
+
+=item query => $sql
+
+SQL code for the prepared query.
+
+=item on_error => sub { ... }
+
+=item on_result => sub { ... }
+
+=item on_done => sub { ... }
+
+These callbacks perform in the same fashion as on the C<push_query>
+method.
+
+=back
 
 =item $adb->push_query_prepared(%opts)
 
@@ -375,6 +406,14 @@ An alternative way to pass the arguments to a SQL query with placeholders.
 =head1 SEE ALSO
 
 L<Pg::PQ>, L<AnyEvent>.
+
+L<AnyEvent::DBD::Pg> provides non-blocking access to a PostgreSQL
+through L<DBD::Pg>, but note that L<DBD::Pg> does not provides a
+complete asynchronous interface (for instance, establishing new
+connections is always a blocking operation).
+
+L<Protocol::PostgreSQL>: pure Perl implementation of the PostgreSQL
+client-server protocol that can be used in non-blocking mode.
 
 =head1 AUTHOR
 
