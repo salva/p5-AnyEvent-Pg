@@ -172,6 +172,8 @@ sub push_prepare { shift->_push_query(_type => 'prepare', @_) }
 
 sub unshift_query { shift->_push_query(_type => 'query', _unshift => 1, @_) }
 
+sub unshift_query_prepared { shift->_push_query(_type => 'query_prepared', _unshift => 1, @_) }
+
 sub _on_push_query {
     my $self = shift;
     # warn "_on_push_query";
@@ -395,9 +397,45 @@ method.
 
 =item $adb->push_query_prepared(%opts)
 
+Queues a prepared query for execution.
+
+The accepted options are:
+
+=over 4
+
+=item name => $name
+
+Name of the prepared query.
+
+=item args => \@args
+
+Arguments for the query.
+
+=item on_result => sub { ... }
+
+=item on_done => sub { ... }
+
+=item on_error => sub { ... }
+
+These callbacks work as on the C<push_query> method.
+
+=back
+
 =item $adb->unshift_query(%opts)
 
+=item $adb->unshift_query_prepared(%opts)
+
+These method work in the same way as its C<push> counterparts, but
+instead of pushing the query at the end of the queue they push
+(unshift) it at the beginning to be executed just after the current
+one is done.
+
+This methods can be used as a way to run transactions composed of
+several queries.
+
 =item $adb->fail
+
+Aborts any queued queries calling the C<on_error> callbacks.
 
 =item $adb->destroy
 
@@ -414,6 +452,23 @@ connections is always a blocking operation).
 
 L<Protocol::PostgreSQL>: pure Perl implementation of the PostgreSQL
 client-server protocol that can be used in non-blocking mode.
+
+=head1 BUGS AND SUPPORT
+
+This is a very early release that may contain lots of bugs.
+
+Send bug reports by email or using the CPAN bug tracker at
+L<https://rt.cpan.org/Dist/Display.html?Status=Active&Queue=AnyEvent-Pg>.
+
+=head2 Commercial support
+
+This module was implemented during the development of QVD
+(L<http://theqvd.com>) the Linux VDI platform.
+
+Commercial support, professional services and custom software
+development services around this module are available from QindelGroup
+(L<http://qindel.com>). Send us an email with a rough description of your
+requirements and we will get back to you ASAP.
 
 =head1 AUTHOR
 
