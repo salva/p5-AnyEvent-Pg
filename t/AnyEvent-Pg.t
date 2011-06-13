@@ -93,7 +93,7 @@ sub dump_result {
     my $dbc = $pg->dbc;
     printf("conn status:\t'%s' (%d),\terr:\t'%s'\nresult status:\t'%s' (%d),\tmsg:\t'%s',\terr:\t'%s'\n",
            $dbc->status, $dbc->status, $dbc->errorMessage,
-           $dbr->status, $dbr->status, $dbr->statusString, $dbr->errorMessage);
+           $dbr->status, $dbr->status, $dbr->statusMessage, $dbr->errorMessage);
     if ($dbr->status == PGRES_TUPLES_OK) {
         say 'ntuples: ', $dbr->ntuples;
         say 'nfields: ', $dbr->nfields;

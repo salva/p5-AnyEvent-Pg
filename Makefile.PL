@@ -1,12 +1,11 @@
 use 5.010001;
+
 use ExtUtils::MakeMaker;
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
-WriteMakefile(
-    NAME              => 'AnyEvent::Pg',
-    VERSION_FROM      => 'lib/AnyEvent/Pg.pm', # finds $VERSION
-    PREREQ_PM         => {}, # e.g., Module::Name => 1.1
-    ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
-      (ABSTRACT_FROM  => 'lib/AnyEvent/Pg.pm', # retrieve abstract from module
-       AUTHOR         => 'Salvador Fandino <salva@>') : ()),
-);
+
+WriteMakefile( NAME          => 'AnyEvent::Pg',
+               VERSION_FROM  => 'lib/AnyEvent/Pg.pm',
+               PREREQ_PM     => { 'Pg::PQ'   => '0.04',
+                                  'AnyEvent' => '5.34' },
+               ABSTRACT_FROM => 'lib/AnyEvent/Pg.pm',
+               AUTHOR        => 'Salvador Fandino <sfandino@yahoo.com>'
+             );
