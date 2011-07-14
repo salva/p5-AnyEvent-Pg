@@ -45,6 +45,7 @@ sub new {
                  on_empty_queue => $on_empty_queue,
                  on_notify => $on_notify,
                  queries => [],
+                 query_seq => 1,
                };
     bless $self, $class;
 
@@ -113,7 +114,7 @@ sub _on_connect_error {
     $self->_on_fatal_error;
 }
 
-sub fail { shift->_on_fatal_error }
+sub abort_all { shift->_on_fatal_error }
 
 sub _on_fatal_error {
     my $self = shift;
@@ -156,11 +157,32 @@ sub _push_query {
     }
     %opts and croak "unsuported option(s) ".join(", ", keys %opts);
 
+    my $seq = $query{seq} = $self->{query_seq}++;
+
     if ($unshift) {
         unshift @{$self->{queries}}, \%query;
     }
     else {
         push @{$self->{queries}}, \%query;
+    }
+    $seq;
+}
+
+sub queue_size {
+    my $self = shift;
+    my $size = @{$self->{queries}};
+    $size++ if $self->{current_query};
+    $size
+}
+
+sub cancel_query {
+    my ($self, $seq) = @_;
+    my $current = $self->{current};
+    if ($current and $current->{seq} == $seq) {
+        delete $current->{$_} for qw(on_error on_result on_done on_timeout);
+    }
+    else {
+        @{$self->{queries}} = grep $_->{seq} != $seq, @{$self->{queries}};
     }
 }
 
@@ -433,9 +455,13 @@ one is done.
 This methods can be used as a way to run transactions composed of
 several queries.
 
-=item $adb->fail
+=item $adb->abort_all
 
 Aborts any queued queries calling the C<on_error> callbacks.
+
+=items $adb->queue_size
+
+Returns the number of queries queued for execution.
 
 =item $adb->destroy
 
