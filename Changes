@@ -1,6 +1,8 @@
 Revision history for Perl extension AnyEvent::Pg.
 
-0.02
+0.02  Jul 18, 2011
+        - push_query was not triggering database dialog
+        - add debugging support
         - add cancel_query method
         - add queue_size method
         - rename fail method to abort_all
