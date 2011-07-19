@@ -10,6 +10,20 @@ use Carp;
 use AnyEvent;
 use Pg::PQ qw(:pgres_polling);
 
+our $debug;
+
+sub _debug {
+    my $self = shift;
+    my $state = $self->{state} // '<undef>';
+    my $dbc = $self->{dbc} // '<undef>';
+    my $fd = $self->{fd} // '<undef>';
+    local ($ENV{__DIE__}, $@);
+    my $method = (caller 1)[3];
+    $method =~ s/.*:://;
+    my $error = eval { $self->{dbc}->errorMessage } // '<undef>';
+    warn "[$self state: $state, dbc: $dbc, fd: $fd, error: $error]\@$method> @_\n";
+}
+
 sub _check_state {
     my $self = shift;
     my $state = $self->{state};
@@ -22,10 +36,8 @@ sub _check_state {
 
 sub _ensure_list { ref $_[0] ? @{$_[0]} : $_[0]  }
 
-
 sub new {
     my ($class, $conninfo, %opts) = @_;
-
     my $on_connect = delete $opts{on_connect};
     my $on_connect_error = delete $opts{on_connect_error};
     my $on_empty_queue = delete $opts{on_empty_queue};
@@ -57,10 +69,11 @@ sub new {
 sub dbc { shift->{dbc} }
 
 sub _connectPoll {
-    # warn "_connectPoll";
     my $self = shift;
     my $dbc = $self->{dbc};
     my $fd = $self->{fd};
+
+    $debug and $self->_debug("enter");
 
     my ($r, $goto, $rw, $ww);
     if (defined $fd) {
@@ -68,9 +81,15 @@ sub _connectPoll {
     }
     else {
         $fd = $self->{fd} = $dbc->socket;
+        if ($fd < 0) {
+            $debug and $self->_debug("error");
+            $self->_on_connect_error;
+            return;
+        }
         $r = PGRES_POLLING_WRITING;
     }
 
+    $debug and $self->_debug("wants to: $r");
     given ($r) {
         when (PGRES_POLLING_READING) {
             $rw = $self->{read_watcher} // AE::io $fd, 0, sub { $self->_connectPoll };
@@ -91,12 +110,31 @@ sub _connectPoll {
     $self->{write_watcher} = $ww;
     # warn "read_watcher: $rw, write_watcher: $ww";
 
-    $self->$goto if $goto;
+    if ($goto) {
+        $debug and $self->_debug("goto $goto");
+        $self->$goto;
+    }
 }
 
 sub _call_back {
+    my $self = shift;
+    my $obj = (ref $_[0] ? shift : $self);
     my $cb = shift;
-    $cb->(@_) if $cb;
+    my $sub = $obj->{$cb};
+    if (defined $sub) {
+        if ($debug) {
+            local ($@, $ENV{__DIE__});
+            my $name = eval {
+                require Devel::Peek;
+                Devel::Peek::CvGV($sub)
+                } // 'unknown';
+            $self->_debug("calling $cb as $sub ($name)");
+        }
+        $sub->($self, @_);
+    }
+    else {
+        $debug and $self->_debug("no callback for $cb");
+    }
 }
 
 sub _on_connect {
@@ -104,13 +142,14 @@ sub _on_connect {
     my $dbc = $self->{dbc};
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
-    _call_back($self->{on_connect}, $self);
+    $debug and $self->_debug('connected to database');
+    $self->_call_back('on_connect');
     $self->_on_push_query;
 }
 
 sub _on_connect_error {
     my $self = shift;
-    _call_back($self->{on_connect_error}, $self);
+    $self->_call_back('on_connect_error');
     $self->_on_fatal_error;
 }
 
@@ -121,11 +160,11 @@ sub _on_fatal_error {
     $self->{state} = 'failed';
     undef $self->{write_watcher};
     undef $self->{read_watcher};
-    _call_back($self->{on_error}, $self, 1);
+    $self->_call_back('on_error', 1);
     my $cq = delete $self->{current_query};
-    $cq and _call_back($cq->{on_error}, $self);
+    $cq and $self->_call_back($cq, 'on_error');
     my $queue = $self->{queue};
-    _call_back($_->{on_error}, $self) for @$queue;
+    $self->_call_back($_, 'on_error') for @$queue;
     @$queue = ();
 }
 
@@ -134,6 +173,7 @@ sub _push_query {
     my %query;
     my $unshift = delete $opts{_unshift};
     my $type = $query{type} = delete $opts{_type};
+    $debug and $self->_debug("pushing query of type $type");
     $query{$_} = delete $opts{$_} for qw(on_result on_error on_done);
     given ($type) {
         when ('query') {
@@ -165,6 +205,7 @@ sub _push_query {
     else {
         push @{$self->{queries}}, \%query;
     }
+    $self->_on_push_query;
     $seq;
 }
 
@@ -206,11 +247,12 @@ sub _on_push_query {
         my $queries = $self->{queries};
         # warn scalar(@$queries)." queries queued";
         if (@$queries) {
+            $debug and $self->_debug("want to write query");
             $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
             # warn "waiting for writable";
         }
         else {
-            _call_back($self->{on_empty_queue}, $self);
+            $self->_call_back('on_empty_queue');
         }
     }
 }
@@ -221,6 +263,7 @@ my %send_type2method = (query => 'sendQuery',
 
 sub _on_push_query_writable {
     my $self = shift;
+    $debug and $self->_debug("can write");
     # warn "_on_push_query_writable";
     undef $self->{write_watcher};
     $self->{current_query} and die "Internal error: _on_push_query_writable called when there is already a current query";
@@ -229,13 +272,17 @@ sub _on_push_query_writable {
     # warn "sendQuery('" . join("', '", @query) . "')";
     my $method = $send_type2method{$query->{type}} //
         die "internal error: no method defined for push type $query->{type}";
+    if ($debug) {
+        my $args = "'" . join("', '", @{$query->{args}}) . "'";
+        $self->_debug("calling $method($args)");
+    }
     if ($dbc->$method(@{$query->{args}})) {
         $self->{current_query} = $query;
         $self->_on_push_query_flushable;
     }
     else {
         warn "$method failed: ". $dbc->errorMessage;
-        _call_back($query->{on_error}, $self);
+        $self->_call_back('on_error');
         # FIXME: check if the error is recoverable or fatal before continuing...
         $self->_on_push_query
     }
@@ -245,14 +292,17 @@ sub _on_push_query_flushable {
     my $self = shift;
     my $dbc = $self->{dbc};
     my $ww = delete $self->{write_watcher};
+    $debug and $self->_debug("flushing");
     given ($dbc->flush) {
         when (-1) {
             $self->_on_fatal_error;
         }
         when (0) {
+            $debug and $self->_debug("flushed");
             $self->_on_consume_input;
         }
         when (1) {
+            $debug and $self->_debug("wants to write");
             $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, sub { $self->_on_push_query_flushable };
         }
         default {
@@ -264,23 +314,30 @@ sub _on_push_query_flushable {
 sub _on_consume_input {
     my $self = shift;
     my $dbc = $self->{dbc};
-    $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
+    my $cq = $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
+    $debug and $self->_debug("looking for data");
     unless ($dbc->consumeInput) {
-        _call_back($self->{on_error}, $self);
+        $debug and $self->_debug("consumeInput failed");
+        $self->_call_back('on_error');
     }
     while (1) {
         if ($dbc->busy) {
+            $debug and $self->_debug("wants to read");
             $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
             return;
         }
         else {
+            $debug and $self->_debug("data available");
+
             my $result = $dbc->result;
             if ($result) {
+                $debug and $self->_debug("calling on_result");
                 # warn "result readed";
-                _call_back($self->{current_query}{on_result}, $self, $result);
+                $self->_call_back($cq, 'on_result', $result);
             }
             else {
-                _call_back($self->{current_query}{on_done}, $self);
+                $debug and $self->_debug("calling on_done");
+                $self->_call_back($cq, 'on_done');
                 undef $self->{read_watcher};
                 undef $self->{current_query};
                 $self->_on_push_query;
