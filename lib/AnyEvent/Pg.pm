@@ -331,8 +331,13 @@ sub _on_consume_input {
 
             my $result = $dbc->result;
             if ($result) {
-                $debug and $self->_debug("calling on_result");
-                # warn "result readed";
+                if ($debug) {
+                    my $status = $result->status;
+                    my $cmdRows = $result->cmdRows;
+                    my $rows = $result->rows;
+                    my $cols = $result->columns;
+                    $self->_debug("calling on_result status: $status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
+                }
                 $self->_maybe_callback($cq, 'on_result', $result);
             }
             else {
