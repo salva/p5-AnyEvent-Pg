@@ -116,7 +116,7 @@ sub _connectPoll {
     }
 }
 
-sub _call_back {
+sub _maybe_callback {
     my $self = shift;
     my $obj = (ref $_[0] ? shift : $self);
     my $cb = shift;
@@ -143,13 +143,13 @@ sub _on_connect {
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
     $debug and $self->_debug('connected to database');
-    $self->_call_back('on_connect');
+    $self->_maybe_callback('on_connect');
     $self->_on_push_query;
 }
 
 sub _on_connect_error {
     my $self = shift;
-    $self->_call_back('on_connect_error');
+    $self->_maybe_callback('on_connect_error');
     $self->_on_fatal_error;
 }
 
@@ -160,11 +160,11 @@ sub _on_fatal_error {
     $self->{state} = 'failed';
     undef $self->{write_watcher};
     undef $self->{read_watcher};
-    $self->_call_back('on_error', 1);
+    $self->_maybe_callback('on_error', 1);
     my $cq = delete $self->{current_query};
-    $cq and $self->_call_back($cq, 'on_error');
+    $cq and $self->_maybe_callback($cq, 'on_error');
     my $queue = $self->{queue};
-    $self->_call_back($_, 'on_error') for @$queue;
+    $self->_maybe_callback($_, 'on_error') for @$queue;
     @$queue = ();
 }
 
@@ -252,7 +252,7 @@ sub _on_push_query {
             # warn "waiting for writable";
         }
         else {
-            $self->_call_back('on_empty_queue');
+            $self->_maybe_callback('on_empty_queue');
         }
     }
 }
@@ -282,7 +282,7 @@ sub _on_push_query_writable {
     }
     else {
         warn "$method failed: ". $dbc->errorMessage;
-        $self->_call_back('on_error');
+        $self->_maybe_callback('on_error');
         # FIXME: check if the error is recoverable or fatal before continuing...
         $self->_on_push_query
     }
@@ -318,7 +318,7 @@ sub _on_consume_input {
     $debug and $self->_debug("looking for data");
     unless ($dbc->consumeInput) {
         $debug and $self->_debug("consumeInput failed");
-        $self->_call_back('on_error');
+        $self->_maybe_callback('on_error');
     }
     while (1) {
         if ($dbc->busy) {
@@ -333,11 +333,11 @@ sub _on_consume_input {
             if ($result) {
                 $debug and $self->_debug("calling on_result");
                 # warn "result readed";
-                $self->_call_back($cq, 'on_result', $result);
+                $self->_maybe_callback($cq, 'on_result', $result);
             }
             else {
                 $debug and $self->_debug("calling on_done");
-                $self->_call_back($cq, 'on_done');
+                $self->_maybe_callback($cq, 'on_done');
                 undef $self->{read_watcher};
                 undef $self->{current_query};
                 $self->_on_push_query;
