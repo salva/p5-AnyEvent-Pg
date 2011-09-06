@@ -11,6 +11,7 @@ use AnyEvent;
 use Pg::PQ qw(:pgres_polling);
 
 our $debug;
+$debug ||= 0;
 
 sub _debug {
     my $self = shift;
@@ -73,7 +74,7 @@ sub _connectPoll {
     my $dbc = $self->{dbc};
     my $fd = $self->{fd};
 
-    $debug and $self->_debug("enter");
+    $debug and $debug & 1 and $self->_debug("enter");
 
     my ($r, $goto, $rw, $ww);
     if (defined $fd) {
@@ -82,14 +83,14 @@ sub _connectPoll {
     else {
         $fd = $self->{fd} = $dbc->socket;
         if ($fd < 0) {
-            $debug and $self->_debug("error");
+            $debug and $debug & 1 and $self->_debug("error");
             $self->_on_connect_error;
             return;
         }
         $r = PGRES_POLLING_WRITING;
     }
 
-    $debug and $self->_debug("wants to: $r");
+    $debug and $debug & 1 and $self->_debug("wants to: $r");
     given ($r) {
         when (PGRES_POLLING_READING) {
             $rw = $self->{read_watcher} // AE::io $fd, 0, sub { $self->_connectPoll };
@@ -111,7 +112,7 @@ sub _connectPoll {
     # warn "read_watcher: $rw, write_watcher: $ww";
 
     if ($goto) {
-        $debug and $self->_debug("goto $goto");
+        $debug and $debug & 1 and $self->_debug("goto $goto");
         $self->$goto;
     }
 }
@@ -122,7 +123,7 @@ sub _maybe_callback {
     my $cb = shift;
     my $sub = $obj->{$cb};
     if (defined $sub) {
-        if ($debug) {
+        if ($debug & 2) {
             local ($@, $ENV{__DIE__});
             my $name = eval {
                 require Devel::Peek;
@@ -133,7 +134,7 @@ sub _maybe_callback {
         $sub->($self, @_);
     }
     else {
-        $debug and $self->_debug("no callback for $cb");
+        $debug and $debug & 1 and $self->_debug("no callback for $cb");
     }
 }
 
@@ -142,7 +143,7 @@ sub _on_connect {
     my $dbc = $self->{dbc};
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
-    $debug and $self->_debug('connected to database');
+    $debug and $debug & 2 and $self->_debug('connected to database');
     $self->_maybe_callback('on_connect');
     $self->_on_push_query;
 }
@@ -173,7 +174,7 @@ sub _push_query {
     my %query;
     my $unshift = delete $opts{_unshift};
     my $type = $query{type} = delete $opts{_type};
-    $debug and $self->_debug("pushing query of type $type");
+    $debug and $debug & 1 and $self->_debug("pushing query of type $type");
     $query{$_} = delete $opts{$_} for qw(on_result on_error on_done);
     given ($type) {
         when ('query') {
@@ -247,7 +248,7 @@ sub _on_push_query {
         my $queries = $self->{queries};
         # warn scalar(@$queries)." queries queued";
         if (@$queries) {
-            $debug and $self->_debug("want to write query");
+            $debug and $debug & 1 and $self->_debug("want to write query");
             $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
             # warn "waiting for writable";
         }
@@ -263,7 +264,7 @@ my %send_type2method = (query => 'sendQuery',
 
 sub _on_push_query_writable {
     my $self = shift;
-    $debug and $self->_debug("can write");
+    $debug and $debug & 1 and $self->_debug("can write");
     # warn "_on_push_query_writable";
     undef $self->{write_watcher};
     $self->{current_query} and die "Internal error: _on_push_query_writable called when there is already a current query";
@@ -272,7 +273,7 @@ sub _on_push_query_writable {
     # warn "sendQuery('" . join("', '", @query) . "')";
     my $method = $send_type2method{$query->{type}} //
         die "internal error: no method defined for push type $query->{type}";
-    if ($debug) {
+    if ($debug and $debug & 1) {
         my $args = "'" . join("', '", @{$query->{args}}) . "'";
         $self->_debug("calling $method($args)");
     }
@@ -281,7 +282,7 @@ sub _on_push_query_writable {
         $self->_on_push_query_flushable;
     }
     else {
-        warn "$method failed: ". $dbc->errorMessage;
+        $debug and $debug & 1 and $self->_debug("$method failed: ". $dbc->errorMessage);
         $self->_maybe_callback('on_error');
         # FIXME: check if the error is recoverable or fatal before continuing...
         $self->_on_push_query
@@ -292,17 +293,17 @@ sub _on_push_query_flushable {
     my $self = shift;
     my $dbc = $self->{dbc};
     my $ww = delete $self->{write_watcher};
-    $debug and $self->_debug("flushing");
+    $debug and $debug & 1 and $self->_debug("flushing");
     given ($dbc->flush) {
         when (-1) {
             $self->_on_fatal_error;
         }
         when (0) {
-            $debug and $self->_debug("flushed");
+            $debug and $debug & 1 and $self->_debug("flushed");
             $self->_on_consume_input;
         }
         when (1) {
-            $debug and $self->_debug("wants to write");
+            $debug and $debug & 1 and $self->_debug("wants to write");
             $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, sub { $self->_on_push_query_flushable };
         }
         default {
@@ -315,23 +316,23 @@ sub _on_consume_input {
     my $self = shift;
     my $dbc = $self->{dbc};
     my $cq = $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
-    $debug and $self->_debug("looking for data");
+    $debug and $debug & 1 and $self->_debug("looking for data");
     unless ($dbc->consumeInput) {
-        $debug and $self->_debug("consumeInput failed");
+        $debug and $debug & 1 and $self->_debug("consumeInput failed");
         $self->_maybe_callback('on_error');
     }
     while (1) {
         if ($dbc->busy) {
-            $debug and $self->_debug("wants to read");
+            $debug and $debug & 1 and $self->_debug("wants to read");
             $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
             return;
         }
         else {
-            $debug and $self->_debug("data available");
+            $debug and $debug & 1 and $self->_debug("data available");
 
             my $result = $dbc->result;
             if ($result) {
-                if ($debug) {
+                if ($debug and $debug & 2) {
                     my $status = $result->status;
                     my $cmdRows = $result->cmdRows;
                     my $rows = $result->rows;
@@ -341,7 +342,7 @@ sub _on_consume_input {
                 $self->_maybe_callback($cq, 'on_result', $result);
             }
             else {
-                $debug and $self->_debug("calling on_done");
+                $debug and $debug & 2 and $self->_debug("calling on_done");
                 $self->_maybe_callback($cq, 'on_done');
                 undef $self->{read_watcher};
                 undef $self->{current_query};
