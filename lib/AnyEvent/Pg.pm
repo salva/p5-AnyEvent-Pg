@@ -172,6 +172,7 @@ sub _on_fatal_error {
 sub _push_query {
     my ($self, %opts) = @_;
     my %query;
+
     my $unshift = delete $opts{_unshift};
     my $type = $query{type} = delete $opts{_type};
     $debug and $debug & 1 and $self->_debug("pushing query of type $type");
@@ -200,14 +201,17 @@ sub _push_query {
 
     my $seq = $query{seq} = $self->{query_seq}++;
 
+    my $query = \%query;
     if ($unshift) {
-        unshift @{$self->{queries}}, \%query;
+        unshift @{$self->{queries}}, $query;
     }
     else {
-        push @{$self->{queries}}, \%query;
+        push @{$self->{queries}}, $query;
     }
+
     $self->_on_push_query;
-    $seq;
+
+    AnyEvent::Pg::Watcher->_new($query);
 }
 
 sub queue_size {
@@ -215,17 +219,6 @@ sub queue_size {
     my $size = @{$self->{queries}};
     $size++ if $self->{current_query};
     $size
-}
-
-sub cancel_query {
-    my ($self, $seq) = @_;
-    my $current = $self->{current};
-    if ($current and $current->{seq} == $seq) {
-        delete $current->{$_} for qw(on_error on_result on_done on_timeout);
-    }
-    else {
-        @{$self->{queries}} = grep $_->{seq} != $seq, @{$self->{queries}};
-    }
 }
 
 sub push_query { shift->_push_query(_type => 'query', @_) }
@@ -241,20 +234,19 @@ sub unshift_query_prepared { shift->_push_query(_type => 'query_prepared', _unsh
 sub _on_push_query {
     my $self = shift;
     # warn "_on_push_query";
-    if ($self->{current_query}) {
-        # warn "there is already a query queued";
-    }
-    else {
+    unless ($self->{current_query}) {
         my $queries = $self->{queries};
         # warn scalar(@$queries)." queries queued";
-        if (@$queries) {
+        while (@$queries) {
+            if ($queries->[0]{canceled}) {
+                shift @$queries;
+                next;
+            }
             $debug and $debug & 1 and $self->_debug("want to write query");
             $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
-            # warn "waiting for writable";
+            return;
         }
-        else {
-            $self->_maybe_callback('on_empty_queue');
-        }
+        $self->_maybe_callback('on_empty_queue');
     }
 }
 
@@ -356,6 +348,21 @@ sub _on_consume_input {
 sub destroy {
     my $self = shift;
     %$self = ();
+}
+
+package AnyEvent::Pg::Watcher;
+
+sub _new {
+    my ($class, $query) = @_;
+    my $self = \$query;
+    bless $self, $class;
+}
+
+sub DESTROY {
+    # cancel query
+    my $query = ${shift()};
+    delete  $query->{$_} for qw(on_error on_result on_done on_timeout);
+    $query->{canceled} = 1;
 }
 
 1;
