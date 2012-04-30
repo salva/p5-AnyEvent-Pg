@@ -18,11 +18,13 @@ sub _debug {
     my $state = $self->{state} // '<undef>';
     my $dbc = $self->{dbc} // '<undef>';
     my $fd = $self->{fd} // '<undef>';
-    local ($ENV{__DIE__}, $@);
-    my $method = (caller 1)[3];
+    my $dbc_status = $dbc->status // '<undef>';
+    my ($pkg, $file, $line, $method) = (caller 1);
     $method =~ s/.*:://;
+    local ($ENV{__DIE__}, $@);
     my $error = eval { $self->{dbc}->errorMessage } // '<undef>';
-    warn "[$self state: $state, dbc: $dbc, fd: $fd, error: $error]\@$method> @_\n";
+    $error =~ s/\n\s*/|/msg;
+    warn "[$self state: $state, dbc: $dbc, fd: $fd, error: $error, dbc_status: $dbc_status]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
 sub _check_state {
@@ -327,12 +329,12 @@ sub _on_consume_input {
     my $self = shift;
     my $dbc = $self->{dbc};
     my $cq = $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
-    undef $self->{timout_watcher};
+    undef $self->{timeout_watcher};
 
     $debug and $debug & 1 and $self->_debug("looking for data");
     unless ($dbc->consumeInput) {
         $debug and $debug & 1 and $self->_debug("consumeInput failed");
-        $self->_maybe_callback('on_error');
+        return $self->_on_fatal_error;
     }
     while (1) {
         if ($dbc->busy) {
@@ -348,11 +350,12 @@ sub _on_consume_input {
             my $result = $dbc->result;
             if ($result) {
                 if ($debug and $debug & 2) {
-                    my $status = $result->status;
-                    my $cmdRows = $result->cmdRows;
-                    my $rows = $result->rows;
-                    my $cols = $result->columns;
-                    $self->_debug("calling on_result status: $status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
+                    my $status = $result->status // '<undef>';
+                    my $conn_status = $dbc->status // '<undef>';
+                    my $cmdRows = $result->cmdRows // '<undef>';
+                    my $rows = $result->rows // '<undef>';
+                    my $cols = $result->columns // '<undef>';
+                    $self->_debug("calling on_result status: $status, conn status: $conn_status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
                 }
                 $self->_maybe_callback($cq, 'on_result', $result);
             }
