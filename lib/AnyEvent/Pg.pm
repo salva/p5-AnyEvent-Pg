@@ -159,6 +159,7 @@ sub _on_connect {
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
     $debug and $debug & 2 and $self->_debug('connected to database');
+    $self->{read_watcher} = AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
     $self->_maybe_callback('on_connect');
     $self->_on_push_query;
 }
@@ -328,7 +329,7 @@ sub _on_push_query_flushable {
 sub _on_consume_input {
     my $self = shift;
     my $dbc = $self->{dbc};
-    my $cq = $self->{current_query} or die "Internal error: _on_consume_input called when there is no current query";
+
     undef $self->{timeout_watcher};
 
     $debug and $debug & 1 and $self->_debug("looking for data");
@@ -336,36 +337,45 @@ sub _on_consume_input {
         $debug and $debug & 1 and $self->_debug("consumeInput failed");
         return $self->_on_fatal_error;
     }
-    while (1) {
-        if ($dbc->busy) {
-            $debug and $debug & 1 and $self->_debug("wants to read");
-            $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
-            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
-                if $self->{timeout};
-            return;
-        }
-        else {
-            $debug and $debug & 1 and $self->_debug("data available");
 
-            my $result = $dbc->result;
-            if ($result) {
-                if ($debug and $debug & 2) {
-                    my $status = $result->status // '<undef>';
-                    my $conn_status = $dbc->status // '<undef>';
-                    my $cmdRows = $result->cmdRows // '<undef>';
-                    my $rows = $result->rows // '<undef>';
-                    my $cols = $result->columns // '<undef>';
-                    $self->_debug("calling on_result status: $status, conn status: $conn_status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
-                }
-                $self->_maybe_callback($cq, 'on_result', $result);
+    while (my @notify = $dbc->notifies) {
+        $debug and $debug & 2 and $self->_debug("notify recived: @notify");
+        $self->_maybe_callback(on_notify => @notify);
+    }
+
+    if (defined (my $cq = $self->{current_query})) {
+        while (1) {
+            if ($self->{write_watcher} or $dbc->busy) {
+                $debug and $debug & 1 and $self->_debug($self->{write_watcher}
+                                                        ? "wants to write and read"
+                                                        : "wants to read");
+                # $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+                    if $self->{timeout};
+                return;
             }
             else {
-                $debug and $debug & 2 and $self->_debug("calling on_done");
-                $self->_maybe_callback($cq, 'on_done');
-                undef $self->{read_watcher};
-                undef $self->{current_query};
-                $self->_on_push_query;
-                return;
+                $debug and $debug & 1 and $self->_debug("data available");
+
+                my $result = $dbc->result;
+                if ($result) {
+                    if ($debug and $debug & 2) {
+                        my $status = $result->status // '<undef>';
+                        my $conn_status = $dbc->status // '<undef>';
+                        my $cmdRows = $result->cmdRows // '<undef>';
+                        my $rows = $result->rows // '<undef>';
+                        my $cols = $result->columns // '<undef>';
+                        $self->_debug("calling on_result status: $status, conn status: $conn_status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
+                    }
+                    $self->_maybe_callback($cq, 'on_result', $result);
+                }
+                else {
+                    $debug and $debug & 2 and $self->_debug("calling on_done");
+                    $self->_maybe_callback($cq, 'on_done');
+                    undef $self->{current_query};
+                    $self->_on_push_query;
+                    return;
+                }
             }
         }
     }
@@ -374,7 +384,8 @@ sub _on_consume_input {
 sub _on_timeout {
     my $self = shift;
     $debug and $debug & 2 and $self->_debug("operation timed out");
-    delete @{$self}{qw(read_watcher write_watcher timeout_watcher)};
+    # _on_fatal_error already deletes watchers
+    # delete @{$self}{qw(read_watcher write_watcher timeout_watcher)};
     $self->{timedout} = 1;
     $self->_on_fatal_error
 }
@@ -450,10 +461,47 @@ libpq C<PQconnectdbParams> and C<PQconnectdb> documentation for the
 details:
 L<http://www.postgresql.org/docs/9.0/interactive/libpq-connect.html>).
 
-=item $adb->push_query(%opts)
+The following options are accepted:
+
+=over 4
+
+=item on_connect => sub { ... }
+
+The given callback is invoked after the connection has been
+successfully established.
+
+=item on_connect_error => sub { ... }
+
+This callback is invoked if a fatal error happens when establishing
+the connection to the database server.
+
+=item on_empty_queue => sub { ... }
+
+This callback is called everytime the query queue becomes empty.
+
+=item on_notify => sub { ... }
+
+This callback is called when a notification is received.
+
+=item on_error => sub { ... }
+
+This callback is called when some error happens.
+
+=item timeout => $seconds
+
+Sets the default timeout for network activity. When nothing happens on
+the network for the given seconds while processing some query, the
+connection is marked as dead.
+
+=back
+
+=item $w = $adb->push_query(%opts)
 
 Pushes a query into the object queue that will eventually be
 dispatched to the database.
+
+Returns a query watcher object. Destroying the watcher (usually when
+it gets unreferenced) cancels the query.
 
 The accepted options are:
 
@@ -494,7 +542,7 @@ processed. The AnyEvent::Pg object is passed as an argument.
 
 =back
 
-=item $adb->push_prepare(%opts)
+=item $w = $adb->push_prepare(%opts)
 
 Queues a query prepare operation for execution.
 
@@ -521,7 +569,7 @@ method.
 
 =back
 
-=item $adb->push_query_prepared(%opts)
+=item $w = $adb->push_query_prepared(%opts)
 
 Queues a prepared query for execution.
 
@@ -547,9 +595,9 @@ These callbacks work as on the C<push_query> method.
 
 =back
 
-=item $adb->unshift_query(%opts)
+=item $w = $adb->unshift_query(%opts)
 
-=item $adb->unshift_query_prepared(%opts)
+=item $w = $adb->unshift_query_prepared(%opts)
 
 These method work in the same way as its C<push> counterparts, but
 instead of pushing the query at the end of the queue they push
@@ -561,7 +609,8 @@ several queries.
 
 =item $adb->abort_all
 
-Aborts any queued queries calling the C<on_error> callbacks.
+Marks the connection as dead and aborts any queued queries calling the
+C<on_error> callbacks.
 
 =items $adb->queue_size
 
@@ -606,7 +655,7 @@ Salvador FandiE<ntilde>o, E<lt>sfandino@yahoo.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2011 by Qindel FormaciE<oacute>n y Servicios S.L.
+Copyright (C) 2011, 2012 by Qindel FormaciE<oacute>n y Servicios S.L.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
