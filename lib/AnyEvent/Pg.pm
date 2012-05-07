@@ -159,7 +159,6 @@ sub _on_connect {
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
     $debug and $debug & 2 and $self->_debug('connected to database');
-    $self->{read_watcher} = AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
     $self->_maybe_callback('on_connect');
     $self->_on_push_query;
 }
@@ -177,6 +176,7 @@ sub _on_fatal_error {
     my $self = shift;
     $self->{state} = 'failed';
     delete @{$self}{qw(write_watcher read_watcher timeout_watcher)};
+    $self->stop_async_listener;
     my $cq = delete $self->{current_query};
     $cq and $self->_maybe_callback($cq, 'on_error');
     my $queue = $self->{queue};
@@ -390,8 +390,57 @@ sub _on_timeout {
     $self->_on_fatal_error
 }
 
+# start a long-rolling read poller for receiving asynchronous
+# notifications from our client handle
+sub start_async_listener {
+    my ($self) = @_;
+
+    $self->{async_listener} ||= AE::io $self->{fd}, 0, sub {
+        $self->_on_consume_input;
+    };
+}
+
+sub stop_async_listener {
+    my ($self) = @_;
+
+    delete $self->{async_listener};
+}
+
+# calls LISTEN command, notifies of async notifications via on_notify handler
+sub listen {
+    my ($self, $channel, %opts) = @_;
+
+    $self->start_async_listener;
+    return $self->_push_notif_command('LISTEN', $channel, %opts);
+}
+
+sub unlisten {
+    my ($self, $channel, %opts) = @_;
+
+    return $self->_push_notif_command('UNLISTEN', $channel, %opts);
+}
+
+# publishes notification with $payload on channel
+sub notify {
+    my ($self, $channel, $payload, %opts) = @_;
+
+    my $query = 'NOTIFY "' . $self->dbc->escapeString($channel) . '"';
+    $query = join(',', $query, $self->dbc->escapeLiteral($payload)) if $payload;
+    return $self->push_query(query => $query, %opts);
+}
+
+sub _push_notif_command {
+    my ($self, $cmd, $channel, %opts) = @_;
+
+    return $self->push_query(
+        query => $cmd . ' "' . $self->dbc->escapeString($channel) . '"',
+        %opts
+    );
+}
+
 sub destroy {
     my $self = shift;
+    $self->stop_async_listener;
     %$self = ();
 }
 
@@ -421,7 +470,8 @@ AnyEvent::Pg - Query a PostgreSQL database asynchronously
 
   use AnyEvent::Pg;
   my $db = AnyEvent::Pg->new("dbname=foo",
-                             on_connect => sub { ... });
+                             on_connect => sub { ... },
+                             on_notify => sub { ... });
 
   $db->push_query(query => 'insert into foo (id, name) values(7, \'seven\')',
                   on_result => sub { ... },
@@ -481,7 +531,9 @@ This callback is called everytime the query queue becomes empty.
 
 =item on_notify => sub { ... }
 
-This callback is called when a notification is received.
+This callback is called when an asynchronous notification is
+received. It is passed the notification name, notifier PID and an
+optional payload.
 
 =item on_error => sub { ... }
 
@@ -594,6 +646,21 @@ Arguments for the query.
 These callbacks work as on the C<push_query> method.
 
 =back
+
+=item $adb->listen($channel, %opts)
+
+Listens for NOTIFY events on C<$channel>, if any are received then the
+on_notify callback from C<connect()> will be called.
+
+Takes the same C<%opts> as C<push_query()>.
+
+=item $adb->unlisten($channel, %opts)
+
+Unregistes for events on C<$channel>.
+
+=item $adb->notify($channel, $payload, %opts)
+
+Sends a notification on C<$channel> with C<$payload>.
 
 =item $w = $adb->unshift_query(%opts)
 
