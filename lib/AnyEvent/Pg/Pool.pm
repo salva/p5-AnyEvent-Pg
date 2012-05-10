@@ -202,8 +202,11 @@ sub _on_conn_connect {
 sub _on_conn_connect_error {
     my ($pool, $seq, $conn) = @_;
     $debug and $debug & 8 and $pool->_debug("removing broken connection in state connecting($pool->{connecting}{$seq}) $conn (==$pool->{conns}{$seq}), seq: $seq");
-    delete $pool->{conns}{$seq};
+    # the connection object will be removed from the Pool on the
+    # on_error callback that will be called just after this one
+    # returns:
     delete $pool->{connecting}{$seq};
+    $pool->{busy}{$seq} = 1;
     if ($pool->_is_queue_empty) {
         $pool->{conn_retries} = 0;
     }
