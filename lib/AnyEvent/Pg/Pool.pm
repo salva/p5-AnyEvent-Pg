@@ -181,11 +181,12 @@ sub _on_conn_error {
             $pool->_maybe_callback($query, 'on_error', $conn);
         }
     }
-    $debug and $debug & 8 and $pool->_debug("removing broken connection in state busy("
-                                            . ($pool->{busy}{$seq} || 0)
-                                            . ") $conn (=="
-                                            . ($pool->{conns}{$seq}||'<undef>')
-                                            . "), seq: $seq");
+    if ($debug and $debug & 8) {
+        my @states = grep $pool->{$_}{$seq}, qw(busy idle connecting);
+        $pool->_debug("removing broken connection in state(s!) @states, "
+                      . "\$conn: $conn, \$pool->{conns}{$seq}: "
+                      . ($pool->{conns}{$seq} // '<undef>'));
+    }
     delete $pool->{busy}{$seq}
         or croak "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
     delete $pool->{conns}{$seq};
@@ -201,7 +202,7 @@ sub _on_conn_connect {
 
 sub _on_conn_connect_error {
     my ($pool, $seq, $conn) = @_;
-    $debug and $debug & 8 and $pool->_debug("removing broken connection in state connecting($pool->{connecting}{$seq}) $conn (==$pool->{conns}{$seq}), seq: $seq");
+    $debug and $debug & 8 and $pool->_debug("unable to connect to database");
     # the connection object will be removed from the Pool on the
     # on_error callback that will be called just after this one
     # returns:
@@ -212,6 +213,7 @@ sub _on_conn_connect_error {
     }
     else {
         if ($pool->{conn_retries}++ < $pool->{max_conn_retries}) {
+            $debug and $debug & 8 and $pool->debug("starting timer for delayed reconnection");
             $pool->{delay_watcher} = AE::timer $pool->{conn_delay}, 0, sub { $pool->_on_delayed_reconnect };
         }
         else {
