@@ -213,7 +213,7 @@ sub _on_conn_connect_error {
     }
     else {
         if ($pool->{conn_retries}++ < $pool->{max_conn_retries}) {
-            $debug and $debug & 8 and $pool->debug("starting timer for delayed reconnection");
+            $debug and $debug & 8 and $pool->_debug("starting timer for delayed reconnection");
             $pool->{delay_watcher} = AE::timer $pool->{conn_delay}, 0, sub { $pool->_on_delayed_reconnect };
         }
         else {
