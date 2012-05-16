@@ -365,7 +365,8 @@ sub _on_consume_input {
                         my $cmdRows = $result->cmdRows // '<undef>';
                         my $rows = $result->rows // '<undef>';
                         my $cols = $result->columns // '<undef>';
-                        $self->_debug("calling on_result status: $status, conn status: $conn_status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
+                        my $sqlstate = $result->errorField('sqlstate') // '<undef>';
+                        $self->_debug("calling on_result status: $status, sqlstate: $sqlstate, conn status: $conn_status, cmdRows: $cmdRows, columns: $cols, rows: $rows");
                     }
                     $self->_maybe_callback($cq, 'on_result', $result);
                 }
