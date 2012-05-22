@@ -444,6 +444,13 @@ AnyEvent::Pg - Query a PostgreSQL database asynchronously
 
 =head1 DESCRIPTION
 
+  *******************************************************************
+  ***                                                             ***
+  *** NOTE: This is a very early release that may contain lots of ***
+  *** bugs. The API is not stable and may change between releases ***
+  ***                                                             ***
+  *******************************************************************
+
 This library allows to query PostgreSQL databases asynchronously. It
 is a thin layer on top of L<Pg::PQ> that integrates it inside the
 L<AnyEvent> framework.
@@ -623,7 +630,7 @@ Returns the number of queries queued for execution.
 
 =head1 SEE ALSO
 
-L<Pg::PQ>, L<AnyEvent>.
+L<Pg::PQ>, L<AnyEvent>, L<AnyEvent::Pg::Pool>.
 
 L<AnyEvent::DBD::Pg> provides non-blocking access to a PostgreSQL
 through L<DBD::Pg>, but note that L<DBD::Pg> does not provides a

@@ -310,3 +310,147 @@ sub DESTROY {
 }
 
 1;
+
+=head1 NAME
+
+AnyEvent::Pg::Pool
+
+=head1 SYNOPSIS
+
+  my $pool = AnyEvent::Pg::Pool->new($conninfo,
+                                     on_connect_error => \&on_db_is_dead);
+
+  $pool->push_query(query => 'select * from foo',
+                    on_result => sub { ... });
+
+=head1 DESCRIPTION
+
+  *******************************************************************
+  ***                                                             ***
+  *** NOTE: This is a very early release that may contain lots of ***
+  *** bugs. The API is not stable and may change between releases ***
+  ***                                                             ***
+  *******************************************************************
+
+This module handles a pool of databases connections, and transparently
+handles reconnection and reposting queries on case of network or
+server errors.
+
+=head2 API
+
+The following methods are provided:
+
+=over 4
+
+=item $pool = AnyEvent::Pg::Pool->new($conninfo, %opts)
+
+Creates a new object.
+
+Accepts the following options:
+
+=over 4
+
+=item size => $size
+
+Maximun number of database connections that can be simultaneously
+established with the server.
+
+=item connection_retries => $n
+
+Maximum number of attempts to establish a new database connection
+before calling the C<on_connect_error> callback when there is no other
+connection alive on the pool.
+
+=item connection_delay => $seconds
+
+When establishing a new connection fails, this setting allows to
+configure the number of seconds to delay before trying to connect
+again.
+
+=item timeout => $seconds
+
+When some active connection does not report activity for the given
+number of seconds, it is considered dead and closed.
+
+=item on_error => $callback
+
+When some error happens that can not be automatically handled by the
+module (for instance, by requeuing the current query), this callback
+is invoked.
+
+=item on_connect_error => $callback
+
+When the number of failed reconnection attemps goes over the limit,
+this callback is called. The pool object and the L<AnyEvent::Pg>
+object representing the last failed attempt are passed as arguments.
+
+=back
+
+=item $w = $pool->push_query(%opts)
+
+Pushes a database query on the pool queue. It will be sent to the
+database once any of the database connections becomes idle.
+
+A watcher object is returned. If that watcher goes out of scope, the
+query is canceled.
+
+This method accepts all the options supported by the method of the
+same name on L<AnyEvent::Pg> plus the following ones:
+
+=over 4
+
+=item retry_on_sqlstate => \@states
+
+=item retry_on_sqlstate => \%states
+
+A hash of sqlstate values that are retryable. When some error happen,
+and the value of sqlstate from the result object has a value on this
+hash, the query is requeued.
+
+=item max_retries => $n
+
+Maximum number of times a query can be retried. When this limit is
+reached, the on_error callback will be called.
+
+Note that queries are not retried after partial success. For instance,
+when a result object is returned, but then the server decides to abort
+the transaction (this is rare, but can happen from time to time).
+
+=back
+
+=back
+
+=head1 SEE ALSO
+
+L<AnyEvent::Pg>, L<Pg::PQ>, L<AnyEvent>.
+
+=head1 BUGS AND SUPPORT
+
+This is a very early release that may contain lots of bugs.
+
+Send bug reports by email or using the CPAN bug tracker at
+L<https://rt.cpan.org/Dist/Display.html?Status=Active&Queue=AnyEvent-Pg>.
+
+=head2 Commercial support
+
+This module was implemented during the development of QVD
+(L<http://theqvd.com>) the Linux VDI platform.
+
+Commercial support, professional services and custom software
+development services around this module are available from QindelGroup
+(L<http://qindel.com>). Send us an email with a rough description of your
+requirements and we will get back to you ASAP.
+
+=head1 AUTHOR
+
+Salvador FandiE<ntilde>o, E<lt>sfandino@yahoo.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2012 by Qindel FormaciE<oacute>n y Servicios S.L.
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.10.1 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

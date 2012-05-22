@@ -1,5 +1,13 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.03  May 22, 2012
+        - add banner about alpha status of this module in the
+          documentation
+        - add support for AnyEvent::Pg::Pool
+        - add support for notifications
+        - return watcher objects from push_queue and related methods
+          ** THIS CHANGE IS BACKWARD INCOMPATIBLE!!! **
+
 0.02  Jul 18, 2011
         - push_query was not triggering database dialog
         - add debugging support

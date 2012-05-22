@@ -1,6 +1,9 @@
 Changes
+examples/pg_killer.pl
+lib/AnyEvent/Pg.pm
+lib/AnyEvent/Pg/Pool.pm
 Makefile.PL
 MANIFEST
 README
 t/AnyEvent-Pg.t
-lib/AnyEvent/Pg.pm
+t/pod.t
