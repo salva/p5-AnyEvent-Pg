@@ -403,9 +403,9 @@ same name on L<AnyEvent::Pg> plus the following ones:
 
 =item retry_on_sqlstate => \%states
 
-A hash of sqlstate values that are retryable. When some error happen,
+A hash of sqlstate values that are retryable. When some error happens,
 and the value of sqlstate from the result object has a value on this
-hash, the query is requeued.
+hash, the query is reset and reintroduced on the query.
 
 =item max_retries => $n
 
