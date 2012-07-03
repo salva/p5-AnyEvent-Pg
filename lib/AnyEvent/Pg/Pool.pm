@@ -37,6 +37,8 @@ sub new {
     my $connection_retries = delete $opts{connection_retries} || 3;
     my $connection_delay = delete $opts{connection_delay} || 2;
     my $timeout = delete $opts{timeout} || 30;
+    my $scavenge_timeout = delete $opts{scavenge_timeout} || 0;
+    my $scavenge_interval = delete $opts{scavenge_interval} || 1;
     my $on_error = delete $opts{on_error};
     my $on_connect_error = delete $opts{on_connect_error};
     # my $on_empty_queue = delete $opts{on_empty_queue};
@@ -49,6 +51,9 @@ sub new {
                  max_conn_retries => $connection_retries,
                  conn_retries => 0,
                  conn_delay => $connection_delay,
+                 scavenge_timeout => $scavenge_timeout,
+                 scavenge_interval => $scavenge_interval,
+                 scavenge_watcher => undef,
                  conns => {},
                  current => {},
                  busy => {},
@@ -65,7 +70,25 @@ sub new {
 
 sub is_dead { shift->{dead} }
 
-sub _on_start {}
+sub _on_start {
+    my $pool = shift;
+    if( ($pool->{scavenge_timeout} > 0) and ($pool->{scavenge_interval} > 0) ) {
+        $pool->{scavenge_watcher} = AE::timer $pool->{scavenge_interval}, $pool->{scavenge_interval}, sub { $pool->_scavenge };
+    };
+}
+
+sub _scavenge {
+    my $pool = shift;
+    my $idle = $pool->{idle};
+    if( %$idle ) {
+        my $now = AE::now;
+        my $scavenge_timeout = $pool->{scavenge_timeout};
+        for my $seq (grep { $now - $idle->{$_} > $scavenge_timeout } keys %$idle) {
+            (delete $pool->{idle}{$seq} and $pool->{conns}{$seq}->destroy and delete $pool->{conns}{$seq})
+                or croak "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
+        }
+    }
+}
 
 sub push_query {
     my ($pool, %opts) = @_;
@@ -112,8 +135,8 @@ sub _check_queue {
             $pool->_start_new_conn;
             return;
         }
-        keys %$idle;
-        my ($seq) = each %$idle;
+        my $seq = undef;
+        (not defined $seq or $seq > $_) and $seq = $_ for keys %$idle;
         my $conn = $pool->{conns}{$seq}
             or croak("internal error, pool is corrupted, seq: $seq:\n" . Dumper($pool));
 
@@ -292,8 +315,16 @@ sub _on_conn_empty_queue {
             croak "internal error: empty_queue callback invoked by object not in state busy or connecting, seq: $seq";
         }
     }
-    $pool->{idle}{$seq} = 1;
+    $pool->{idle}{$seq} = AE::now;
     $pool->_check_queue;
+}
+
+sub destroy {
+    my $pool = shift;
+    my $conns = $pool->{conns};
+    $conns->{$_}->destroy for keys %$conns;
+    %$pool = ();
+    1;
 }
 
 package AnyEvent::Pg::Pool::Watcher;
