@@ -112,6 +112,7 @@ sub _check_queue {
             $pool->_start_new_conn;
             return;
         }
+        keys %$idle;
         my ($seq) = each %$idle;
         my $conn = $pool->{conns}{$seq}
             or croak("internal error, pool is corrupted, seq: $seq:\n" . Dumper($pool));
