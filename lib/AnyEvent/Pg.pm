@@ -394,6 +394,7 @@ sub _on_timeout {
 sub destroy {
     my $self = shift;
     %$self = ();
+    1;
 }
 
 package AnyEvent::Pg::Watcher;
