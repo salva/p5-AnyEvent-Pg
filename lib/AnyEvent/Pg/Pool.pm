@@ -165,7 +165,7 @@ sub _on_query_done {
     my ($pool, $seq, $conn) = @_;
     my $query = delete $pool->{current}{$seq};
     if (delete $query->{retry}) {
-        $debug and $debug & 8 and "unshifting failed query into queue";
+        $debug and $debug & 8 and $pool->_debug("unshifting failed query into queue");
         $query->{max_retries}--;
         unshift @{$pool->{queue}}, $query;
     }
