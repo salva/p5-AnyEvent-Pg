@@ -79,9 +79,10 @@ sub push_query {
     my $query = \%query;
     my $queue = $pool->{queue};
     push @$queue, $query;
-    $debug and $debug & 8 and $pool->_debug('query pushed into queue, raw queue size is now ' . scalar @$queue);
     AE::postpone { $pool->_check_queue };
-    AnyEvent::Pg::Pool::Watcher->_new($query);
+    my $w = AnyEvent::Pg::Pool::Watcher->_new($query);
+    $debug and $debug & 8 and $pool->_debug('query pushed into queue, raw queue size is now ' . scalar @$queue);
+    return $w;
 }
 
 sub _is_queue_empty {
@@ -99,13 +100,21 @@ sub _is_queue_empty {
 sub _check_queue {
     my $pool = shift;
     my $idle = $pool->{idle};
-    $debug and $debug & 8 and $pool->_debug('checking queue, there are '. (scalar keys %$idle) . ' idle connections');
-    while (!$pool->_is_queue_empty) {
-        $debug and $debug & 8 and $pool->_debug('processing first query from the query');
+    while (1) {
+        $debug and $debug & 8 and $pool->_debug('checking queue, there are '
+                                                . (scalar keys %$idle)
+                                                . ' idle connections, queue size is '
+                                                . (scalar @{$pool->{queue}}));
+        if ($pool->_is_queue_empty) {
+            $debug and $debug & 8 and $pool->_debug('queue is now empty');
+            last;
+        }
+        $debug and $debug & 8 and $pool->_debug('processing first query from the queue');
         unless (%$idle) {
             if ($pool->{dead}) {
                 my $query = shift @{$pool->{queue}};
                 $pool->_maybe_callback($query, 'on_error');
+                $debug and $debug & 8 and $pool->_debug('on_error called for query $query');
                 next;
             }
             $debug and $debug & 8 and $pool->_debug('starting new connection');
