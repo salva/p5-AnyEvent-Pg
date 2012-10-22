@@ -1,6 +1,6 @@
 package AnyEvent::Pg;
 
-our $VERSION = 0.03;
+our $VERSION = 0.04;
 
 use 5.010;
 use strict;

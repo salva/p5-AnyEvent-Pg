@@ -1,5 +1,7 @@
 package AnyEvent::Pg::Pool;
 
+our $VERSION = '0.04';
+
 use strict;
 use warnings;
 use Carp qw(verbose croak);
