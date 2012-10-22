@@ -620,7 +620,7 @@ several queries.
 Marks the connection as dead and aborts any queued queries calling the
 C<on_error> callbacks.
 
-=items $adb->queue_size
+=item $adb->queue_size
 
 Returns the number of queries queued for execution.
 
