@@ -28,8 +28,6 @@ sub _debug {
     warn "[$pool c:$connecting/i:$idle/b:$busy|t:$total|d:$delayed]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
-
-
 sub new {
     my ($class, $conninfo, %opts) = @_;
     $conninfo = { %$conninfo } if ref $conninfo;
@@ -39,11 +37,13 @@ sub new {
     my $timeout = delete $opts{timeout} || 30;
     my $on_error = delete $opts{on_error};
     my $on_connect_error = delete $opts{on_connect_error};
+    my $on_transient_error = delete $opts{on_transient_error};
     # my $on_empty_queue = delete $opts{on_empty_queue};
     my $pool = { conninfo => $conninfo,
                  size => $size,
                  on_error => $on_error,
                  on_connect_error => $on_connect_error,
+                 on_transient_error => $on_transient_error,
                  # on_empty_queue => $on_empty_queue,
                  timeout => $timeout,
                  max_conn_retries => $connection_retries,
@@ -213,6 +213,8 @@ sub _start_new_conn {
 sub _on_conn_error {
     my ($pool, $seq, $conn) = @_;
 
+    $pool->_maybe_callback('on_transient_error');
+
     if (my $query = delete $pool->{current}{$seq}) {
         if ($query->{max_retries}-- > 0) {
             undef $query->{watcher};
@@ -245,6 +247,8 @@ sub _on_conn_connect {
 sub _on_conn_connect_error {
     my ($pool, $seq, $conn) = @_;
     $debug and $debug & 8 and $pool->_debug("unable to connect to database");
+
+    $pool->_maybe_callback('on_transient_error');
 
     # the connection object will be removed from the Pool on the
     # on_error callback that will be called just after this one
@@ -393,6 +397,14 @@ is invoked.
 When the number of failed reconnection attemps goes over the limit,
 this callback is called. The pool object and the L<AnyEvent::Pg>
 object representing the last failed attempt are passed as arguments.
+
+=item on_transient_error => $callback
+
+The given callback is invoked every time an internal recoverable error
+happens (for instance, on of the pool connections fails or times out).
+
+There is no guarantee about when this callback will be called and how
+many times. It should be considered just a hint.
 
 =back
 
