@@ -59,6 +59,8 @@ sub new {
                  queue => [],
                  seq => 1,
                  query_seq => 1,
+                 listeners      => {},
+                 listeners_dead => {},
                };
     bless $pool, $class;
     AE::postpone { $pool->_on_start };
@@ -82,9 +84,32 @@ sub push_query {
     my $queue = $pool->{queue};
     push @$queue, $query;
     AE::postpone { $pool->_check_queue };
-    my $w = AnyEvent::Pg::Pool::Watcher->_new($query);
+    my $w = AnyEvent::Pg::Pool::QueryWatcher->_new($query);
     $debug and $debug & 8 and $pool->_debug('query pushed into queue, raw queue size is now ' . scalar @$queue);
     return $w;
+}
+
+sub listen {
+    my $pool = shift;
+    my %opts = (@_ & 1 ? (channel => @_) : @_);
+    my $channel = delete $opts{channel} // croak "channel tag missing";
+    my $listener = $pool->{listeners_run}{$channel} //= {};
+    $listener->{channel} = $channel;
+    $listener->{$_} = delete $opts{$_} for qw(on_notify on_listener_started);
+
+    $pool->{listeners}{$channel} = $listener;
+    my $w = AnyEvent::Pg::Pool::ListenerWatcher->_new($listener);
+    $debug and $debug & 8 and $pool->_debug('listener for channel $channel registered');
+    $pool->_start_listener($channel);
+    return $w;
+}
+
+sub _start_listener {
+    my ($self, $channel) = @_;
+    my $qw = $self->push_query(query => 'listen $1', args => [$channel],
+                               on_result => sub { $self->_listener_started($channel, ) },
+                               on_done => '');
+    
 }
 
 sub _is_queue_empty {
@@ -126,7 +151,7 @@ sub _check_queue {
         keys %$idle;
         my ($seq) = each %$idle;
         my $conn = $pool->{conns}{$seq}
-            or croak("internal error, pool is corrupted, seq: $seq:\n" . Dumper($pool));
+            or die("internal error, pool is corrupted, seq: $seq:\n" . Dumper($pool));
 
         delete $idle->{$seq};
         $pool->{busy}{$seq} = 1;
@@ -199,6 +224,7 @@ sub _start_new_conn {
                                      on_connect_error => sub { $pool->_on_conn_connect_error($seq, @_) },
                                      on_empty_queue => sub { $pool->_on_conn_empty_queue($seq, @_) },
                                      on_error => sub { $pool->_on_conn_error($seq, @_) },
+                                     on_notify => sub { $pool->_on_notify($seq, @_) },
                                     );
         $debug and $debug & 8 and $pool->_debug("new connection started, seq: $seq, conn: $conn");
         $pool->{conns}{$seq} = $conn;
@@ -233,7 +259,7 @@ sub _on_conn_error {
                       . ($pool->{conns}{$seq} // '<undef>'));
     }
     delete $pool->{busy}{$seq} or delete $pool->{idle}{$seq}
-        or croak "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
+        or die "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
     delete $pool->{conns}{$seq};
     $pool->_maybe_callback('on_connect_error', $conn) if $pool->{dead};
     $pool->_check_queue;
@@ -304,26 +330,34 @@ sub _on_conn_empty_queue {
             delete $pool->{connecting}{$seq}) {
         if ($debug) {
             $pool->_debug("pool object: \n" . Dumper($pool));
-            croak "internal error: empty_queue callback invoked by object not in state busy or connecting, seq: $seq";
+            die "internal error: empty_queue callback invoked by object not in state busy or connecting, seq: $seq";
         }
     }
     $pool->{idle}{$seq} = 1;
     $pool->_check_queue;
 }
 
+
 package AnyEvent::Pg::Pool::Watcher;
 
 sub _new {
-    my ($class, $query) = @_;
-    my $watcher = \$query;
-    bless $watcher, $class;
+    my ($class, $obj) = @_;
+    my $watcher = \$obj;
+    bless $obj, $class;
 }
 
 sub DESTROY {
-    my $query = ${shift()};
-    delete @{$query}{qw(watcher)};
-    $query->{canceled} = 1;
+    my $obj = ${shift()};
+    delete $obj->{watcher};
+    $obj->{canceled} = 1;
 }
+
+package AnyEvent::Pg::Pool::QueryWatcher;
+our @ISA = ('AnyEvent::Pg::Pool::Watcher');
+
+package AnyEvent::Pg::Pool::ListenerWatcher;
+our @ISA = ('AnyEvent::Pg::Pool::Watcher');
+
 
 1;
 
