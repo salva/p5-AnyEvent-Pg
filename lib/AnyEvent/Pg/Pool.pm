@@ -106,10 +106,14 @@ sub listen {
 
 sub _start_listener {
     my ($self, $channel) = @_;
+    # FIXME: handle errors, what to do if the query fails?
     my $qw = $self->push_query(query => 'listen $1', args => [$channel],
-                               on_result => sub { $self->_listener_started($channel, ) },
-                               on_done => '');
-    
+                               on_result => sub { $self->_listen_result($channel, @_) });
+}
+
+sub _on_listen_result {
+    my ($self, $channel, $seq, $result) = @_;
+    # working here!
 }
 
 sub _is_queue_empty {
