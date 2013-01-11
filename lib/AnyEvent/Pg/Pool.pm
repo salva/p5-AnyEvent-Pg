@@ -108,12 +108,23 @@ sub _start_listener {
     my ($self, $channel) = @_;
     # FIXME: handle errors, what to do if the query fails?
     my $qw = $self->push_query(query => 'listen $1', args => [$channel],
-                               on_result => sub { $self->_listen_result($channel, @_) });
+                               on_result => sub { $self->_on_listen_result($channel, @_) });
+    $self->{listener_query_watcher}{$channel} = $qw;
 }
 
 sub _on_listen_result {
-    my ($self, $channel, $seq, $result) = @_;
-    # working here!
+    my ($self, $channel, $seq, $conn, $result) = @_;
+
+    delete $self->{listener_query_watcher}{$channel};
+    $self->{listeners_running}{$channel} = $seq;
+}
+
+sub _on_notify {
+    my ($self, $seq, $channel, @more) = @_;
+    my $listener = $self->{listeners}{$channel};
+    if ($listener) {
+        $self->_maybe_callback($listener, 'on_notify', $channel, @more);
+    }
 }
 
 sub _is_queue_empty {
@@ -347,11 +358,12 @@ package AnyEvent::Pg::Pool::Watcher;
 sub _new {
     my ($class, $obj) = @_;
     my $watcher = \$obj;
-    bless $obj, $class;
+    bless $watcher, $class;
 }
 
 sub DESTROY {
-    my $obj = ${shift()};
+    my $watcher = shift;
+    my $obj = $$watcher;
     delete $obj->{watcher};
     $obj->{canceled} = 1;
 }
