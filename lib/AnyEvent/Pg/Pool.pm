@@ -4,8 +4,9 @@ our $VERSION = '0.04';
 
 use strict;
 use warnings;
-use Carp qw(verbose croak);
+use 5.010;
 
+use Carp qw(verbose croak);
 use Data::Dumper;
 
 use AnyEvent::Pg;
@@ -59,8 +60,8 @@ sub new {
                  queue => [],
                  seq => 1,
                  query_seq => 1,
-                 listeners      => {},
-                 listeners_dead => {},
+                 listeners_by_channel => {},
+                 listeners_by_conn => {},
                };
     bless $pool, $class;
     AE::postpone { $pool->_on_start };
@@ -89,41 +90,106 @@ sub push_query {
     return $w;
 }
 
+sub _get_listener {
+    my ($pool, $channel) = @_;
+    my $lbc = $pool->{listeners_by_channel};
+    $lbc->{$channel} //= { seq       => $pool->{seq}++,
+                           channel   => $channel,
+                           callbacks => [],
+                           state     => new };
+}
+
 sub listen {
     my $pool = shift;
     my %opts = (@_ & 1 ? (channel => @_) : @_);
     my $channel = delete $opts{channel} // croak "channel tag missing";
-    my $listener = $pool->{listeners_run}{$channel} //= {};
-    $listener->{channel} = $channel;
-    $listener->{$_} = delete $opts{$_} for qw(on_notify on_listener_started);
 
-    $pool->{listeners}{$channel} = $listener;
-    my $w = AnyEvent::Pg::Pool::ListenerWatcher->_new($listener);
-    $debug and $debug & 8 and $pool->_debug('listener for channel $channel registered');
-    $pool->_start_listener($channel);
-    return $w;
+     $lcbs = { on_notify           => delete $opts{on_notify},
+               on_listener_started => delete $opts{on_listener_started} };
+
+    my $listener = $pool->_get_listener($channel);
+    push @{$listener->{callbacks}}, $cbs;
+
+    given ($listener->{state}) {
+        when ('new') {
+            $pool->_start_listener($channel);
+        }
+        when ('running') {
+            AE::postpone {
+                $pool->_maybe_callback($lcbs, 'on_listener_started', $channel)
+                    unless $lcbs->{cancelled};
+            };
+        }
+    }
+    $debug and $debug & 8 and $pool->_debug('listener callbacks for channel $channel registered');
+    AnyEvent::Pg::Pool::ListenerWatcher->_new($lcbs);
+}
+
+sub _listener_check_callbacks {
+    my ($pool, $channel) = @_;
+    my $listener = $pool->{listener_by_channel}{$channel}
+        or die "internal error: listener for channel $channel not found";
+    my $lcbs = $listener->{callbacks};
+    @$lcbs = grep !$_->{canceled}, @$lcbs;
+    scalar @$lcbs;
 }
 
 sub _start_listener {
-    my ($self, $channel) = @_;
-    # FIXME: handle errors, what to do if the query fails?
-    my $qw = $self->push_query(query => 'listen $1', args => [$channel],
-                               on_result => sub { $self->_on_listen_result($channel, @_) });
-    $self->{listener_query_watcher}{$channel} = $qw;
+    my ($pool, $channel) = @_;
+
+    if ($pool->_listener_check_callbacks($channel)) {
+        my $qw = $self->push_query(query     => 'listen $1', args => [$channel],
+                                   on_result => sub { $pool->_on_listen_query_result($channel, @_) },
+                                   on_error  => sub { $pool->_start_listener($channel) } );
+
+        my $listener = $pool->{listener_by_channel}{$channel}
+            or die "internal error: listener for channel $channel not found";
+
+        $listener->{state} = 'starting';
+        $listener->{listen_query_watcher} = $qw;
+    }
+    else {
+        # No callbacks, so don't need to subscribe.
+        # Just forget about this listener:
+        delete $pool->{listener_by_channel}{$channel};
+    }
 }
 
-sub _on_listen_result {
-    my ($self, $channel, $seq, $conn, $result) = @_;
+sub _on_listen_query_result {
+    my ($pool, $channel, $seq, $conn, $result) = @_;
 
-    delete $self->{listener_query_watcher}{$channel};
-    $self->{listeners_running}{$channel} = $seq;
+    my $listener = $pool->{listener_by_channel}{$channel}
+        or die "internal error: listener for channel $channel not found";
+
+    delete $listener->{listen_query_watcher};
+    $listener->{state} = 'running';
+    $pool->{listener_by_conn}{$seq}{$channel} = 1;
+
+    $pool->_run_listener_callbacks($channel, 'on_listener_started');
 }
 
 sub _on_notify {
-    my ($self, $seq, $channel, @more) = @_;
-    my $listener = $self->{listeners}{$channel};
-    if ($listener) {
-        $self->_maybe_callback($listener, 'on_notify', $channel, @more);
+    my ($pool, $seq, $channel, @more) = @_;
+    $pool->run_listener_callbacks($channel, 'on_notify', @more);
+}
+
+sub _run_listener_callbacks {
+    my ($pool, $channel, $cbname, @more) = @_;
+    my $clean;
+    if (my $listener = $pool->{listener_by_channel}{$channel}) {
+        my $lcbs = $listener->{callbacks};
+        for my $lcb (@$lcbs) {
+            if ($lcb->{canceled}) {
+                $clean = 1;
+            }
+            else {
+                $pool->_maybe_callback($lcb, $cbname, $channel, @more);
+            }
+        }
+    }
+    if ($clean) {
+        $self->_listener_check_callbacks($channel);
+        # or unsubscribe from this channel.
     }
 }
 
@@ -175,7 +241,6 @@ sub _check_queue {
                                         args      => $query->{args},
                                         on_result => sub { $pool->_on_query_result($seq, @_) },
                                         on_done   => sub { $pool->_on_query_done($seq, @_) });
-        $query->{watcher} = $watcher;
         $pool->{current}{$seq} = $query;
         $debug and $debug & 8 and $pool->_debug("query $query started on conn $conn, seq: $seq");
     }
@@ -260,7 +325,6 @@ sub _on_conn_error {
 
     if (my $query = delete $pool->{current}{$seq}) {
         if ($query->{max_retries}-- > 0) {
-            undef $query->{watcher};
             unshift @{$pool->{queue}}, $query;
         }
         else {
@@ -276,6 +340,13 @@ sub _on_conn_error {
     delete $pool->{busy}{$seq} or delete $pool->{idle}{$seq}
         or die "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
     delete $pool->{conns}{$seq};
+
+    if (my $listeners = delete $pool->{listeners_by_conn}{$seq}) {
+        while (my ($channel) = each %$listeners) {
+            $pool->_start_listener($channel);
+        }
+    }
+
     $pool->_maybe_callback('on_connect_error', $conn) if $pool->{dead};
     $pool->_check_queue;
 }
@@ -364,7 +435,6 @@ sub _new {
 sub DESTROY {
     my $watcher = shift;
     my $obj = $$watcher;
-    delete $obj->{watcher};
     $obj->{canceled} = 1;
 }
 
