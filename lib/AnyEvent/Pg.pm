@@ -19,12 +19,14 @@ sub _debug {
     my $dbc = $self->{dbc} // '<undef>';
     my $fd = $self->{fd} // '<undef>';
     my $dbc_status = $dbc->status // '<undef>';
-    my ($pkg, $file, $line, $method) = (caller 1);
+    my ($pkg, $file, $line, $method) = (caller 0);
     $method =~ s/.*:://;
     local ($ENV{__DIE__}, $@);
     my $error = eval { $self->{dbc}->errorMessage } // '<undef>';
     $error =~ s/\n\s*/|/msg;
-    warn "[$self state: $state, dbc: $dbc, fd: $fd, error: $error, dbc_status: $dbc_status]\@${pkg}::$method> @_ at $file line $line\n";
+    my $r = defined $self->{read_watcher};
+    my $w = defined $self->{write_watcher};
+    warn "[$self seq: $self->{seq}, state: $state, dbc: $dbc, fd: $fd, error: $error, dbc_status: $dbc_status (r:$r/w:$w)]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
 sub _check_state {
@@ -39,6 +41,8 @@ sub _check_state {
 
 sub _ensure_list { ref $_[0] ? @{$_[0]} : $_[0]  }
 
+my $next_seq = 1;
+
 sub new {
     my ($class, $conninfo, %opts) = @_;
     my $on_connect = delete $opts{on_connect};
@@ -47,6 +51,7 @@ sub new {
     my $on_notify = delete $opts{on_notify};
     my $on_error = delete $opts{on_error};
     my $timeout = delete $opts{timeout};
+    my $seq = delete($opts{seq}) // ($next_seq++);
 
     %opts and croak "unknown option(s) ".join(", ", keys %opts)." found";
 
@@ -62,6 +67,7 @@ sub new {
                  on_notify => $on_notify,
                  queries => [],
                  timeout => $timeout,
+                 seq => $seq,
                };
     bless $self, $class;
 
@@ -213,7 +219,7 @@ sub _push_query {
             die "internal error: unknown push_query type $_";
         }
     }
-    %opts and croak "unsuported option(s) ".join(", ", keys %opts);
+    %opts and croak "unsupported option(s) ".join(", ", keys %opts);
 
     my $query = \%query;
     if ($unshift) {
@@ -223,7 +229,10 @@ sub _push_query {
         push @{$self->{queries}}, $query;
     }
 
-    $self->{current_query} or AE::postpone { $self->_on_push_query };
+    $self->{current_query} or AE::postpone {
+        $debug and $debug & 4 and $self->_debug("postponed call to _on_push_query");
+        $self->_on_push_query;
+    };
 
     AnyEvent::Pg::Watcher->_new($query);
 }
@@ -247,12 +256,16 @@ sub unshift_query_prepared { shift->_push_query(_type => 'query_prepared', _unsh
 
 sub _on_push_query {
     my $self = shift;
-    # warn "_on_push_query";
-    unless ($self->{current_query}) {
+    $debug and $debug & 4 and $self->_debug("_on_push_query");
+    if ($self->{current_query}) {
+        $debug and $debug & 2 and $self->_debug("there is already a query being processed ($self->{current_query})");
+    }
+    else {
         my $queries = $self->{queries};
         # warn scalar(@$queries)." queries queued";
         while (@$queries) {
             if ($queries->[0]{canceled}) {
+                $debug and $debug & 2 and $self->_debug("the query at the head of the queue was canceled, looking again!");
                 shift @$queries;
                 next;
             }
@@ -338,6 +351,7 @@ sub _on_consume_input {
         return $self->_on_fatal_error;
     }
 
+    $debug and $debug & 2 and $self->_debug("looking for notifications");
     while (my @notify = $dbc->notifies) {
         $debug and $debug & 2 and $self->_debug("notify recived: @notify");
         $self->_maybe_callback(on_notify => @notify);
