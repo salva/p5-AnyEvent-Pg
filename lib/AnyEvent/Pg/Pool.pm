@@ -176,7 +176,7 @@ sub _on_listen_query_result {
 
     $debug and $debug & 4 and $pool->_debug("listeners_by_conn is now: " . Dumper($pool->{listeners_by_conn}));
 
-    $pool->_run_listener_callbacks($listener, 'on_listener_started');
+    $pool->_run_listener_callbacks($channel, 'on_listener_started');
 }
 
 sub _stop_listener {
