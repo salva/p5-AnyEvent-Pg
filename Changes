@@ -1,6 +1,6 @@
 Revision history for Perl extension AnyEvent::Pg.
 
-0.05  
+0.05  Jan 18, 2013
         - add experimental support for listeners
 
 0.04  Oct 22, 2012
