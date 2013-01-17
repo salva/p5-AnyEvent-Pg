@@ -1,5 +1,6 @@
 Changes
 examples/pg_killer.pl
+examples/listen.pl
 lib/AnyEvent/Pg.pm
 lib/AnyEvent/Pg/Pool.pm
 Makefile.PL
