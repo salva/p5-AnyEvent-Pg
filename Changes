@@ -1,5 +1,8 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.05  
+        - add experimental support for listeners
+
 0.04  Oct 22, 2012
         - add support for the on_transient_error feature
 

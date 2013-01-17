@@ -1,6 +1,6 @@
 package AnyEvent::Pg::Pool;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use strict;
 use warnings;
@@ -510,8 +510,11 @@ AnyEvent::Pg::Pool
   my $pool = AnyEvent::Pg::Pool->new($conninfo,
                                      on_connect_error => \&on_db_is_dead);
 
-  $pool->push_query(query => 'select * from foo',
-                    on_result => sub { ... });
+  my $qw = $pool->push_query(query => 'select * from foo',
+                             on_result => sub { ... });
+
+  my $lw = $pool->listen('bar',
+                         on_notify => sub { ... });
 
 =head1 DESCRIPTION
 
@@ -613,6 +616,64 @@ reached, the on_error callback will be called.
 Note that queries are not retried after partial success. For instance,
 when a result object is returned, but then the server decides to abort
 the transaction (this is rare, but can happen from time to time).
+
+=back
+
+The callbacks for the C<push_query> method receive as arguments the
+pool object, the underlaying L<AnyEvent::Pg> object actually handling
+the query and the result object when applicable. For instance:
+
+    sub on_result_cb {
+        my ($pool, $conn, $result) = @_;
+        ...
+    }
+
+    sub on_done_cb {
+        my ($pool, $conn) = @_;
+    }
+
+    my $watcher = $pool->push_query("select * from foo",
+                                    on_result => \&on_result_cb,
+                                    on_done   => \&on_done_cb);
+
+=item $w = $pool->listen($channel, %opts)
+
+This method allows to subscribe to the given notification channel and
+receive an event everytime another sends a notification (see
+PostgreSQL NOTIFY/LISTEN documentation).
+
+The module will take care of keeping an active L<AnyEvent::Pg> connection
+subscribed to the channel, recovering from errors automatically.
+
+Currently, due to some limitations on the way the C<LISTEN> SQL
+command is parsed, the channel selector has to match C</^[a-z]\w*$/i>.
+
+The options accepted by the method are as follow:
+
+=over 4
+
+=item on_notify => $callback
+
+The given callback will be called everytime some client sends a
+notification for the selected channel.
+
+The arguments to the callback are the pool object, the channel
+selector and any posible data load passed by the client sending the
+notification.
+
+=item on_listener_started => $callback
+
+When the connection is started the first time, or when recovering from
+some connection error, there may be a lapse of time where no
+connection is subscribed to the channel and notifications sent by
+other clients lost.
+
+This callback is called every time a connection is subscribed to the
+channel. It is really a hint that allows to check in some application
+specific way (i.e. performing a select) that no event has been lost.
+
+The arguments passed to the callback are the pool object and the
+channel selector.
 
 =back
 
