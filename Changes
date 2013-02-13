@@ -1,6 +1,7 @@
 Revision history for Perl extension AnyEvent::Pg.
 
 0.06  Feb 12, 2013
+        - add some tests based on Test::postgresql
         - empty_query callback could be called too many times due to
           stacked calls from AE::postpone
 

@@ -229,6 +229,8 @@ sub _push_query {
         push @{$self->{queries}}, $query;
     }
 
+    $self->{call_on_empty_queue} = 1;
+
     $self->{current_query} or AE::postpone {
         $debug and $debug & 4 and $self->_debug("postponed call to _on_push_query");
         $self->_on_push_query;
@@ -263,23 +265,23 @@ sub _on_push_query {
     else {
         my $queries = $self->{queries};
         if ($self->{state} eq 'connected') {
-            # This sub may be called repeatly from calls stacked by
-            # AE::postponed, so we don't call the 'on_empty_queue'
-            # callback when the queue was already empty on entry
-            if (@$queries) {
-                # warn scalar(@$queries)." queries queued";
-                while (@$queries) {
-                    if ($queries->[0]{canceled}) {
-                        $debug and $debug & 2 and $self->_debug("the query at the head of the queue was canceled, looking again!");
-                        shift @$queries;
-                        next;
-                    }
-                    $debug and $debug & 1 and $self->_debug("want to write query");
-                    $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
-                    $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
-                        if $self->{timeout};
-                    return;
+            while (@$queries) {
+                if ($queries->[0]{canceled}) {
+                    $debug and $debug & 2 and $self->_debug("the query at the head of the queue was canceled, looking again!");
+                    shift @$queries;
+                    next;
                 }
+                $debug and $debug & 1 and $self->_debug("want to write query");
+                $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+                    if $self->{timeout};
+                return;
+            }
+
+            if (delete $self->{call_on_empty_queue}) {
+                # This sub may be called repeatly from calls stacked by
+                # AE::postponed, so we don't call the 'on_empty_queue'
+                # callback unless this (ugly) flag is set
                 $self->_maybe_callback('on_empty_queue');
             }
         }
