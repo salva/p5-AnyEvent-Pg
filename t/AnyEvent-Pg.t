@@ -4,14 +4,41 @@ use strict;
 use warnings;
 use 5.010;
 
+$| = 1;
 use Pg::PQ qw(:pgres);
 use AnyEvent::Pg;
+use Test::More;
 
-use Test::More tests => 1;
+my $ci;
+if (defined $ENV{TEST_ANYEVENT_PG_CONNINFO}) {
+    $ci = $ENV{TEST_ANYEVENT_PG_CONNINFO};
+}
+else {
+    unless (eval { require Test::postgresql; 1 }) {
+        plan skip_all => "Unable to load Test::postgresql: $@";
+    }
 
-$| = 1;
+    my $tpg = Test::postgresql->new;
+    unless ($tpg) {
+        no warnings;
+        plan skip_all => "Test::postgresql failed to provide a database instance: $Test::postgresql::errstr";
+    }
+
+    $ci = { dbname => 'test',
+            host   => '127.0.0.1',
+            port   => $tpg->port,
+            user   => 'postgres' };
+}
+
+diag "conninfo: " . Pg::PQ::Conn::_make_conninfo($ci);
+
+plan tests => 18;
+#$AnyEvent::Pg::debug = -1;
+
+
 
 sub on_connect;
+sub on_error;
 sub on_empty_queue;
 sub on_query_error;
 sub on_query_done;
@@ -21,9 +48,14 @@ sub push_query;
 
 my $cv = AnyEvent->condvar;
 
-my $pg = AnyEvent::Pg->new('dbname=pgpqtest',
-                           on_connect => \&on_connect,
-                           on_empty_queue => \&on_empty_queue);
+my @w;
+
+my $pg = AnyEvent::Pg->new($ci,
+                           on_connect       => \&on_connect,
+                           on_connect_error => \&on_connect_error,
+                           on_empty_queue   => \&on_empty_queue);
+
+say "pg: $pg";
 
 push_query('drop table foo');
 push_query('drop table bar');
@@ -52,31 +84,35 @@ sub on_connect {
     say 'connected!'
 }
 
+sub on_connect_error {
+    say 'some error happened'
+}
+
 sub on_empty_queue {
     say 'queue is empty, exiting';
     $cv->send;
 }
 
 sub push_query {
-    $pg->push_query(query => [@_],
-                    on_error => \&on_query_error,
-                    on_result => \&dump_result,
-                    on_done => \&on_query_done);
+    push @w, $pg->push_query(query => [@_],
+                             on_error => \&on_query_error,
+                             on_result => \&dump_result,
+                             on_done => \&on_query_done);
 }
 
 sub push_prepare {
-    $pg->push_prepare(name => $_[0], query => $_[1],
-                      on_error => \&on_query_error,
-                      on_result => \&dump_result,
-                      on_done => \&on_query_done);
+    push @w, $pg->push_prepare(name => $_[0], query => $_[1],
+                               on_error => \&on_query_error,
+                               on_result => \&dump_result,
+                               on_done => \&on_query_done);
 }
 
 sub push_query_prepared {
     my $name = shift;
-    $pg->push_query_prepared(name => $name, args => \@_,
-                             on_error => \&on_query_error,
-                             on_result => \&dump_result,
-                             on_done => \&on_query_done);
+    push @w, $pg->push_query_prepared(name => $name, args => \@_,
+                                      on_error => \&on_query_error,
+                                      on_result => \&dump_result,
+                                      on_done => \&on_query_done);
 }
 
 

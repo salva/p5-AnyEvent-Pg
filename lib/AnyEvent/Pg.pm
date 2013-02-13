@@ -262,20 +262,32 @@ sub _on_push_query {
     }
     else {
         my $queries = $self->{queries};
-        # warn scalar(@$queries)." queries queued";
-        while (@$queries) {
-            if ($queries->[0]{canceled}) {
-                $debug and $debug & 2 and $self->_debug("the query at the head of the queue was canceled, looking again!");
-                shift @$queries;
-                next;
+        if ($self->{state} eq 'connected') {
+            # This sub may be called repeatly from calls stacked by
+            # AE::postponed, so we don't call the 'on_empty_queue'
+            # callback when the queue was already empty on entry
+            if (@$queries) {
+                # warn scalar(@$queries)." queries queued";
+                while (@$queries) {
+                    if ($queries->[0]{canceled}) {
+                        $debug and $debug & 2 and $self->_debug("the query at the head of the queue was canceled, looking again!");
+                        shift @$queries;
+                        next;
+                    }
+                    $debug and $debug & 1 and $self->_debug("want to write query");
+                    $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
+                    $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+                        if $self->{timeout};
+                    return;
+                }
+                $self->_maybe_callback('on_empty_queue');
             }
-            $debug and $debug & 1 and $self->_debug("want to write query");
-            $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
-            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
-                if $self->{timeout};
-            return;
         }
-        $self->_maybe_callback('on_empty_queue');
+        elsif ($self->{state} eq 'failed') {
+            $self->_maybe_callback($_, 'on_error') for @$queries;
+            @$queries = ();
+        }
+        # else, do nothing
     }
 }
 

@@ -1,5 +1,9 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.06  Feb 12, 2013
+        - empty_query callback could be called too many times due to
+          stacked calls from AE::postpone
+
 0.05  Jan 18, 2013
         - add experimental support for listeners
 
