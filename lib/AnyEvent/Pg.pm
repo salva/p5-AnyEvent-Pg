@@ -8,6 +8,7 @@ use warnings;
 use Carp;
 
 use AnyEvent;
+use Method::WeakCallback qw(_weak_cb);
 use Pg::PQ qw(:pgres_polling);
 
 our $debug;
@@ -102,11 +103,11 @@ sub _connectPoll {
     $debug and $debug & 1 and $self->_debug("wants to: $r");
     given ($r) {
         when (PGRES_POLLING_READING) {
-            $rw = $self->{read_watcher} // AE::io $fd, 0, sub { $self->_connectPoll };
+            $rw = $self->{read_watcher} // AE::io $fd, 0, _weak_cb($self, '_connectPoll');
             # say "fd: $fd, read_watcher: $rw";
         }
         when (PGRES_POLLING_WRITING) {
-            $ww = $self->{write_watcher} // AE::io $fd, 1, sub { $self->_connectPoll };
+            $ww = $self->{write_watcher} // AE::io $fd, 1, _weak_cb($self, '_connectPoll');
             # say "fd: $fd, write_watcher: $ww";
         }
         when (PGRES_POLLING_FAILED) {
@@ -126,7 +127,7 @@ sub _connectPoll {
         $self->$goto;
     }
     elsif ($self->{timeout}) {
-        $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_connectPollTimeout };
+        $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_connectPollTimeout');
     }
 }
 
@@ -165,8 +166,9 @@ sub _on_connect {
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
     $debug and $debug & 2 and $self->_debug('connected to database');
-    $self->{read_watcher} = AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
+    $self->{read_watcher} = AE::io $self->{fd}, 0, _weak_cb($self, '_on_consume_input');
     $self->_maybe_callback('on_connect');
+    delete @{$self}{qw(on_connect on_connect_error)};
     $self->_on_push_query;
 }
 
@@ -174,21 +176,31 @@ sub _on_connect_error {
     my $self = shift;
     $debug and $debug & 2 and $self->_debug("connection failed");
     $self->_maybe_callback('on_connect_error');
+    delete @{$self}{qw(on_connect on_connect_error)};
     $self->_on_fatal_error;
 }
 
 sub abort_all { shift->_on_fatal_error }
 
+sub finish {
+    my $self = shift;
+    $self->_on_fatal_error;
+}
+
 sub _on_fatal_error {
     my $self = shift;
     $self->{state} = 'failed';
-    delete @{$self}{qw(write_watcher read_watcher timeout_watcher)};
+    delete @{$self}{qw(write_watcher read_watcher timeout_watcher
+                       on_connect on_connect_error on_empty_query)};
+
     my $cq = delete $self->{current_query};
     $cq and $self->_maybe_callback($cq, 'on_error');
     my $queue = $self->{queue};
     $self->_maybe_callback($_, 'on_error') for @$queue;
     @$queue = ();
     $self->_maybe_callback('on_error', 1);
+    $self->{dbc}->finish;
+    delete $self->{dbc};
 }
 
 sub _push_query {
@@ -272,8 +284,8 @@ sub _on_push_query {
                     next;
                 }
                 $debug and $debug & 1 and $self->_debug("want to write query");
-                $self->{write_watcher} = AE::io $self->{fd}, 1, sub { $self->_on_push_query_writable };
-                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+                $self->{write_watcher} = AE::io $self->{fd}, 1, _weak_cb($self, '_on_push_query_writable');
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
                     if $self->{timeout};
                 return;
             }
@@ -343,8 +355,8 @@ sub _on_push_query_flushable {
         }
         when (1) {
             $debug and $debug & 1 and $self->_debug("wants to write");
-            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, sub { $self->_on_push_query_flushable };
-            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, _weak_cb($self, '_on_push_query_flushable');
+            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
                 if $self->{timeout};
         }
         default {
@@ -377,8 +389,7 @@ sub _on_consume_input {
                 $debug and $debug & 1 and $self->_debug($self->{write_watcher}
                                                         ? "wants to write and read"
                                                         : "wants to read");
-                # $self->{read_watcher} //= AE::io $self->{fd}, 0, sub { $self->_on_consume_input };
-                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, sub { $self->_on_timeout }
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
                     if $self->{timeout};
                 return;
             }
@@ -652,7 +663,10 @@ C<on_error> callbacks.
 
 Returns the number of queries queued for execution.
 
-=item $adb->destroy
+=item $adb->finish
+
+Closes the connection to the database and frees the associated
+resources.
 
 =back
 
