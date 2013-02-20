@@ -9,8 +9,8 @@ use 5.010;
 use Carp qw(verbose croak);
 use Data::Dumper;
 
+use Method::WeakCallback qw(weak_method_callback weak_method_callback_cached);
 use AnyEvent::Pg;
-
 BEGIN {
     *debug = \$AnyEvent::Pg::debug;
     *_maybe_callback = \&AnyEvent::Pg::_maybe_callback;
@@ -146,8 +146,8 @@ sub _start_listener {
 
     if ($pool->_listener_check_callbacks($channel)) {
         my $qw = $pool->push_query( query => "listen $channel", # the channel can not be passed in a placeholder!
-                                    on_result => sub { $pool->_on_listen_query_result($channel, @_) },
-                                    on_error  => sub { $pool->_start_listener($channel) } );
+                                    on_result => weak_method_callback($pool, '_on_listen_query_result', $channel),
+                                    on_error  => weak_method_callback($pool, '_start_listener', $channel) );
 
         my $listener = $pool->{listener_by_channel}{$channel}
             or die "internal error: listener for channel $channel not found";
@@ -187,7 +187,7 @@ sub _stop_listener {
         if (my $conn = $pool->{conn}{$listener->{conn}}) {
             $listener->{state} = 'stopping';
             my $qw = $conn->push_query(query   => "unlisten $channel",
-                                       on_done => sub { $pool->_on_unlisten_query_done($channel) });
+                                       on_done => weak_method_callback($pool, '_on_unlisten_query_done', $channel));
             $listener->{unlisten_query_watcher} = $qw;
         }
     }
@@ -277,8 +277,8 @@ sub _check_queue {
         my $query = shift @{$pool->{queue}};
         my $watcher = $conn->push_query(query     => $query->{query},
                                         args      => $query->{args},
-                                        on_result => sub { $pool->_on_query_result($seq, @_) },
-                                        on_done   => sub { $pool->_on_query_done($seq, @_) });
+                                        on_result => weak_method_callback($pool, '_on_query_result', $seq),
+                                        on_done   => weak_method_callback($pool, '_on_query_done',   $seq) );
         $pool->{current}{$seq} = $query;
         $query->{watcher} = $watcher;
         $debug and $debug & 8 and $pool->_debug("query $query started on conn $conn, seq: $seq");
@@ -339,11 +339,11 @@ sub _start_new_conn {
         my $seq = $pool->{seq}++;
         my $conn = AnyEvent::Pg->new($pool->{conninfo},
                                      timeout => $pool->{timeout},
-                                     on_connect => sub { $pool->_on_conn_connect($seq, @_) },
-                                     on_connect_error => sub { $pool->_on_conn_connect_error($seq, @_) },
-                                     on_empty_queue => sub { $pool->_on_conn_empty_queue($seq, @_) },
-                                     on_error => sub { $pool->_on_conn_error($seq, @_) },
-                                     on_notify => sub { $pool->_on_notify($seq, @_) },
+                                     on_connect => weak_method_callback($pool, '_on_conn_connect', $seq),
+                                     on_connect_error => weak_method_callback($pool, '_on_conn_connect_error', $seq),
+                                     on_empty_queue => weak_method_callback($pool, '_on_conn_empty_queue', $seq),
+                                     on_error => weak_method_callback($pool, '_on_conn_error', $seq),
+                                     on_notify => weak_method_callback($pool, '_on_notify', $seq),
                                      seq => $seq,
                                     );
         $debug and $debug & 8 and $pool->_debug("new connection started, seq: $seq, conn: $conn");
@@ -427,7 +427,7 @@ sub _on_conn_connect_error {
 
         if ($pool->{conn_retries} <= $pool->{max_conn_retries}) {
             $debug and $debug & 8 and $pool->_debug("starting timer for delayed reconnection $pool->{conn_delay}s");
-            $pool->{delay_watcher} = AE::timer $pool->{conn_delay}, 0, sub { $pool->_on_delayed_reconnect };
+            $pool->{delay_watcher} = AE::timer $pool->{conn_delay}, 0, weak_method_callback($pool, '_on_delayed_reconnect');
         }
         else {
             # giving up!
