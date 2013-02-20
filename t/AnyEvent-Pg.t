@@ -167,13 +167,8 @@ $cv->recv;
 pass("after recv");
 
 print Devel::FindRef::track(\$pg), "\n";
-
-# $pg->finish if defined $pg;
 undef $pg;
-undef $tpg;
 undef @w;
-exit(0);
-
 
 
 
