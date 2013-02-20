@@ -9,7 +9,7 @@ use 5.010;
 use Carp qw(verbose croak);
 use Data::Dumper;
 
-use Method::WeakCallback qw(weak_method_callback weak_method_callback_cached);
+use Method::WeakCallback qw(weak_method_callback);
 use AnyEvent::Pg;
 BEGIN {
     *debug = \$AnyEvent::Pg::debug;
