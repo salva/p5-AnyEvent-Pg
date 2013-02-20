@@ -1,6 +1,6 @@
 package AnyEvent::Pg::Pool;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use strict;
 use warnings;
