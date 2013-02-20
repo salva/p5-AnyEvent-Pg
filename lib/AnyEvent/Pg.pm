@@ -8,7 +8,7 @@ use warnings;
 use Carp;
 
 use AnyEvent;
-use Method::WeakCallback qw(_weak_cb);
+use Method::WeakCallback qw(weak_method_callback_cached);
 use Pg::PQ qw(:pgres_polling);
 
 our $debug;
@@ -103,11 +103,11 @@ sub _connectPoll {
     $debug and $debug & 1 and $self->_debug("wants to: $r");
     given ($r) {
         when (PGRES_POLLING_READING) {
-            $rw = $self->{read_watcher} // AE::io $fd, 0, _weak_cb($self, '_connectPoll');
+            $rw = $self->{read_watcher} // AE::io $fd, 0, weak_method_callback_cached($self, '_connectPoll');
             # say "fd: $fd, read_watcher: $rw";
         }
         when (PGRES_POLLING_WRITING) {
-            $ww = $self->{write_watcher} // AE::io $fd, 1, _weak_cb($self, '_connectPoll');
+            $ww = $self->{write_watcher} // AE::io $fd, 1, weak_method_callback_cached($self, '_connectPoll');
             # say "fd: $fd, write_watcher: $ww";
         }
         when (PGRES_POLLING_FAILED) {
@@ -127,7 +127,7 @@ sub _connectPoll {
         $self->$goto;
     }
     elsif ($self->{timeout}) {
-        $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_connectPollTimeout');
+        $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_connectPollTimeout');
     }
 }
 
@@ -166,7 +166,7 @@ sub _on_connect {
     $dbc->nonBlocking(1);
     $self->{state} = 'connected';
     $debug and $debug & 2 and $self->_debug('connected to database');
-    $self->{read_watcher} = AE::io $self->{fd}, 0, _weak_cb($self, '_on_consume_input');
+    $self->{read_watcher} = AE::io $self->{fd}, 0, weak_method_callback_cached($self, '_on_consume_input');
     $self->_maybe_callback('on_connect');
     delete @{$self}{qw(on_connect on_connect_error)};
     $self->_on_push_query;
@@ -284,8 +284,8 @@ sub _on_push_query {
                     next;
                 }
                 $debug and $debug & 1 and $self->_debug("want to write query");
-                $self->{write_watcher} = AE::io $self->{fd}, 1, _weak_cb($self, '_on_push_query_writable');
-                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
+                $self->{write_watcher} = AE::io $self->{fd}, 1, weak_method_callback_cached($self, '_on_push_query_writable');
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_on_timeout')
                     if $self->{timeout};
                 return;
             }
@@ -355,8 +355,8 @@ sub _on_push_query_flushable {
         }
         when (1) {
             $debug and $debug & 1 and $self->_debug("wants to write");
-            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, _weak_cb($self, '_on_push_query_flushable');
-            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
+            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, weak_method_callback_cached($self, '_on_push_query_flushable');
+            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_on_timeout')
                 if $self->{timeout};
         }
         default {
@@ -389,7 +389,7 @@ sub _on_consume_input {
                 $debug and $debug & 1 and $self->_debug($self->{write_watcher}
                                                         ? "wants to write and read"
                                                         : "wants to read");
-                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, _weak_cb($self, '_on_timeout')
+                $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_on_timeout')
                     if $self->{timeout};
                 return;
             }
