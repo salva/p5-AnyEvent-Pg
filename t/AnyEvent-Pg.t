@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use 5.010;
 
-use Devel::FindRef;
+# use Devel::FindRef;
 
 $| = 1;
 use Pg::PQ qw(:pgres);
@@ -166,7 +166,7 @@ $timer = AE::timer 120, 0, sub {
 $cv->recv;
 pass("after recv");
 
-print Devel::FindRef::track(\$pg), "\n";
+# print Devel::FindRef::track(\$pg), "\n";
 undef $pg;
 undef @w;
 
