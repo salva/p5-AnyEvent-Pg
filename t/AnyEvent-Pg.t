@@ -166,16 +166,23 @@ $timer = AE::timer 120, 0, sub {
 $cv->recv;
 pass("after recv");
 
-# print Devel::FindRef::track(\$pg), "\n";
+$cv = AnyEvent->condvar;
+$pg = AnyEvent::Pg->new($ci,
+                        on_empty_queue   => sub {
+                            ok ($queued == 0, "queue is empty");
+                            undef $timer;
+                            $cv->send;
+                        } );
+
+
+$timer = AE::timer 10, 0, sub {
+    fail("timeout");
+    $cv->send;
+};
+
+$cv->recv;
+pass("after recv 2");
+
 undef $pg;
 undef @w;
-
-
-
-
-
-
-
-
-
 

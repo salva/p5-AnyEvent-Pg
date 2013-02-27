@@ -1,6 +1,6 @@
 package AnyEvent::Pg;
 
-our $VERSION = 0.07;
+our $VERSION = 0.08;
 
 use 5.010;
 use strict;
@@ -69,6 +69,7 @@ sub new {
                  queries => [],
                  timeout => $timeout,
                  seq => $seq,
+                 call_on_empty_queue => 1,
                };
     bless $self, $class;
 
@@ -296,12 +297,19 @@ sub _on_push_query {
                 # callback unless this (ugly) flag is set
                 $self->_maybe_callback('on_empty_queue');
             }
+            else {
+                $debug and $debug & 1 and $self->_debug("skipping on_empty_queue callback");
+            }
         }
         elsif ($self->{state} eq 'failed') {
+            $debug and $debug & 1 and $self->_debug("calling on_error queries because we are in state failed");
             $self->_maybe_callback($_, 'on_error') for @$queries;
             @$queries = ();
         }
-        # else, do nothing
+        else {
+            $debug and $debug & 1 and $self->_debug("not processing queued queries because we are in state $self->{state}");
+            # else, do nothing
+        }
     }
 }
 

@@ -1,5 +1,10 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.08  Feb 27, 2013
+        - AnyEvent::Pg objects were not calling on_empty_queue after
+          stablishing the connection
+        - more tests added
+
 0.07  Feb 25, 2013
         - remove dependency on unused Devel::FindRef 
 
