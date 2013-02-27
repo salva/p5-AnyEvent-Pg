@@ -125,7 +125,7 @@ sub ok_query_prepared {
 #
 
 
-plan tests => 18;
+plan tests => 20;
 diag "conninfo: " . Pg::PQ::Conn::_make_conninfo($ci);
 
 my $timer;
@@ -175,7 +175,7 @@ $pg = AnyEvent::Pg->new($ci,
                         } );
 
 
-$timer = AE::timer 10, 0, sub {
+$timer = AE::timer 120, 0, sub {
     fail("timeout");
     $cv->send;
 };
