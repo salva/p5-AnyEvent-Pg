@@ -37,6 +37,7 @@ sub new {
     my $size = delete $opts{size} || 1;
     my $connection_retries = delete $opts{connection_retries} || 3;
     my $connection_delay = delete $opts{connection_delay} || 2;
+    my $global_timeout = delete $opts{global_timeout};
     my $timeout = delete $opts{timeout} || 30;
     my $on_error = delete $opts{on_error};
     my $on_connect_error = delete $opts{on_connect_error};
@@ -52,6 +53,7 @@ sub new {
                  max_conn_retries => $connection_retries,
                  conn_retries => 0,
                  conn_delay => $connection_delay,
+                 global_timeout => $global_timeout,
                  conns => {},
                  current => {},
                  busy => {},
@@ -389,7 +391,6 @@ sub _on_conn_error {
     else {
         $debug and $debug & 4 and $pool->_debug("connection $seq had no listeners attached: " .
                                                 Dumper($pool->{listeners_by_conn}));
-        
     }
 
     $pool->_maybe_callback('on_connect_error', $conn) if $pool->{dead};
@@ -400,6 +401,7 @@ sub _on_conn_connect {
     my ($pool, $seq, $conn) = @_;
     $debug and $debug & 8 and $pool->_debug("conn $conn is now connected, seq: $seq");
     $pool->{conn_retries} = 0;
+    delete $pool->{max_conn_time};
     # _on_conn_empty_queue is called afterwards by the $conn object
 }
 
@@ -417,25 +419,35 @@ sub _on_conn_connect_error {
 
     if ($pool->{delay_watcher}) {
         $debug and $debug & 8 and $pool->_debug("a delayed reconnection is already queued");
+        return;
     }
-    else {
-        # This failed connection is not counted against the limit
-        # unless it is the only connection remaining. Effectively the
-        # module will keep going until all the connections become
-        # broken and no more connections can be established.
-        $pool->{conn_retries}++ unless keys(%{$pool->{conns}}) > 1;
 
-        if ($pool->{conn_retries} <= $pool->{max_conn_retries}) {
+    my $now = time;
+    # This failed connection is not counted against the limit
+    # unless it is the only connection remaining. Effectively the
+    # module will keep going until all the connections become
+    # broken and no more connections can be established.
+    unless (keys(%{$pool->{conns}}) > 1) {
+        $pool->{conn_retries}++;
+        if ($pool->{global_timeout}) {
+            $pool->{max_conn_time} ||= $now + $pool->{global_timeout} - $pool->{conn_delay};
+        }
+    }
+
+    if ($pool->{conn_retries} <= $pool->{max_conn_retries}) {
+        if (not $pool->{max_conn_time} or $pool->{max_conn_time} >= $now) {
             $debug and $debug & 8 and $pool->_debug("starting timer for delayed reconnection $pool->{conn_delay}s");
             $pool->{delay_watcher} = AE::timer $pool->{conn_delay}, 0, weak_method_callback($pool, '_on_delayed_reconnect');
+            return
         }
-        else {
-            # giving up!
-            $debug and $debug & 8 and $pool->_debug("it has been imposible to connect to the database, giving up!!!");
-            $pool->{dead} = 1;
-            # processing continues on the on_conn_error callback
-        }
+        $debug and $debug & 8 and $pool->_debug("global_timeout expired");
     }
+
+    # giving up!
+    $debug and $debug & 8 and $pool->_debug("it has been imposible to connect to the database, giving up!!!");
+    $pool->{dead} = 1;
+
+    # processing continues on the on_conn_error callback
 }
 
 sub _on_fatal_connect_error {
@@ -564,6 +576,16 @@ again.
 
 When some active connection does not report activity for the given
 number of seconds, it is considered dead and closed.
+
+=item global_timeout => $seconds
+
+When all the connections to the database become broken and is not
+possible to stablish a new connection for the given time period the
+pool is considered dead and the C<on_error> callback will be called.
+
+Note that this timeout is approximate. It is checked every time a new
+connection attempt fails but its expiration will not cause the
+abortion of an in-progress connection.
 
 =item on_error => $callback
 
