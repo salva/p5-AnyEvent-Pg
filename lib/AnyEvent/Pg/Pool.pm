@@ -106,7 +106,6 @@ sub listen {
     my $callback = { on_notify           => delete $opts{on_notify},
                      on_listener_started => delete $opts{on_listener_started} };
 
-
     if (my $listener = $lbc->{$channel}) {
         push @{$listener->{callbacks}}, $callback;
         if ($listener->{state} eq 'running') {
@@ -367,8 +366,6 @@ sub _start_new_conn {
 sub _on_conn_error {
     my ($pool, $seq, $conn) = @_;
 
-    $pool->_maybe_callback('on_transient_error');
-
     if (my $query = delete $pool->{current}{$seq}) {
         if ($query->{max_retries}-- > 0) {
             unshift @{$pool->{queue}}, $query;
@@ -387,17 +384,26 @@ sub _on_conn_error {
         or die "internal error, pool is corrupted, seq: $seq\n" . Dumper($pool);
     delete $pool->{conns}{$seq};
 
-    if (my $listeners = delete $pool->{listeners_by_conn}{$seq}) {
-        while (my ($channel) = each %$listeners) {
-            $pool->_start_listener($channel);
-        }
+    my $listeners = delete $pool->{listeners_by_conn}{$seq};
+
+    if ($pool->{dead}) {
+        $pool->_maybe_callback('on_connect_error', $conn);
     }
     else {
-        $debug and $debug & 4 and $pool->_debug("connection $seq had no listeners attached: " .
-                                                Dumper($pool->{listeners_by_conn}));
+        $pool->_maybe_callback('on_transient_error');
+
+
+        if ($listeners and keys %$listeners) {
+            while (my ($channel) = each %$listeners) {
+                $pool->_start_listener($channel);
+            }
+        }
+        else {
+            $debug and $debug & 4 and $pool->_debug("connection $seq had no listeners attached: " .
+                                                    Dumper($pool->{listeners_by_conn}));
+        }
     }
 
-    $pool->_maybe_callback('on_connect_error', $conn) if $pool->{dead};
     $pool->_check_queue;
 }
 
