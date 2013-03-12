@@ -9,9 +9,10 @@ use 5.010;
 $| = 1;
 use Pg::PQ qw(:pgres);
 use AnyEvent::Pg;
+use AnyEvent::Pg::Pool;
 use Test::More;
 
-my ($ci, $tpg);
+my ($ci, $tpg, $port);
 
 if (defined $ENV{TEST_ANYEVENT_PG_CONNINFO}) {
     $ci = $ENV{TEST_ANYEVENT_PG_CONNINFO};
@@ -28,14 +29,17 @@ else {
     }
 
 
+    $port = $tpg->port;
     $ci = { dbname => 'test',
             host   => '127.0.0.1',
-            port   => $tpg->port,
+            port   => $port,
             user   => 'postgres' };
 
     # use Data::Dumper;
     # diag(Data::Dumper->Dump( [$tpg, $ci], [qw(tpg *ci)]));
 }
+
+$port ||= 1234;
 
 my @w;
 my $queued = 0;
@@ -125,7 +129,7 @@ sub ok_query_prepared {
 #
 
 
-plan tests => 20;
+plan tests => 22;
 diag "conninfo: " . Pg::PQ::Conn::_make_conninfo($ci);
 
 my $timer;
@@ -184,5 +188,47 @@ $cv->recv;
 pass("after recv 2");
 
 undef $pg;
+undef @w;
+
+##############################
+#
+# Pool tests:
+#
+
+$cv = AnyEvent->condvar;
+
+my $global_timeout = 10;
+my $timeout        =  1;
+my $delay          =  2;
+my $max_ok = $global_timeout + $timeout * 2 + $delay + 3;
+my $min_ok = $global_timeout - $delay;
+
+my $pool = AnyEvent::Pg::Pool->new({host   => 'localhost',
+                                    port   => $port + 123,
+                                    dbname => 'rominadb',
+                                    user   => 'albano'},
+                                   global_timeout     => $global_timeout,
+                                   timeout            => $timeout,
+                                   connection_retries => 1000,
+                                   on_connect_error   => sub { $cv->send });
+
+# Pool object would not try to connect unless some query is queued
+push @w, $pool->push_query(query => "select now()");
+
+my $start = time;
+$timer = AE::timer $max_ok + 2, 0, sub {
+    diag("timer callback called!");
+    $cv->send
+};
+
+$cv->recv;
+my $elapsed = time - $start;
+
+ok($elapsed >= $min_ok, "retried for the given time")
+    or diag ("min_ok: $min_ok, elapsed: $elapsed");
+ok($elapsed <= $max_ok, "connection aborted after the given global_timeout")
+    or diag ("max_ok: $max_ok, elapsed: $elapsed");
+
+undef $pool;
 undef @w;
 
