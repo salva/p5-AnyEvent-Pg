@@ -146,6 +146,10 @@ sub _listener_check_callbacks {
 sub _start_listener {
     my ($pool, $channel) = @_;
 
+    if ($pool->{dead}) {
+        $debug and $debug & 4 and $pool->_debug("ignoring listeners, the pool is dead");
+        return;
+    }
     if ($pool->_listener_check_callbacks($channel)) {
         my $qw = $pool->push_query( query => "listen $channel", # the channel can not be passed in a placeholder!
                                     on_result => weak_method_callback($pool, '_on_listen_query_result', $channel),
