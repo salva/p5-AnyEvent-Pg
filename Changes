@@ -1,5 +1,8 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.09  Mar 21, 2013
+       - add support for global_timeout feature
+
 0.08  Feb 27, 2013
         - AnyEvent::Pg objects were not calling on_empty_queue after
           stablishing the connection
