@@ -1,5 +1,10 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.10  Mar 25, 2013
+       - add support for set method that allows to change pool
+         parameters after creation
+       - resolve some problems with Test::postgresql
+
 0.09  Mar 21, 2013
        - add support for global_timeout feature
 

@@ -1,6 +1,6 @@
 package AnyEvent::Pg::Pool;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 use strict;
 use warnings;
@@ -31,15 +31,20 @@ sub _debug {
     warn "[$pool c:$connecting/i:$idle/b:$busy|t:$total|d:$delayed]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
+my %default = ( connection_retries => 3,
+                connection_dealy => 2,
+                timeout => 30,
+                size => 1 );
+
 sub new {
     my ($class, $conninfo, %opts) = @_;
     $conninfo = { %$conninfo } if ref $conninfo;
-    my $size = delete $opts{size} || 1;
-    my $connection_retries = delete $opts{connection_retries} || 3;
-    my $connection_delay = delete $opts{connection_delay} || 2;
+    my $size = delete $opts{size} // $default{size};
+    my $connection_retries = delete $opts{connection_retries} // $default{connection_retries};
+    my $connection_delay = delete $opts{connection_delay} // $default{connection_delay};
+    my $timeout = delete $opts{timeout} // $default{timeout};
     my $global_timeout = delete $opts{global_timeout};
-    my $timeout = delete $opts{timeout} || 30;
-    my $on_error = delete $opts{on_error};
+    my $on_error = delete $opts{on_error} ;
     my $on_connect_error = delete $opts{on_connect_error};
     my $on_transient_error = delete $opts{on_transient_error};
     # my $on_empty_queue = delete $opts{on_empty_queue};
@@ -71,6 +76,24 @@ sub new {
 }
 
 sub is_dead { shift->{dead} }
+
+sub set {
+    my $pool = shift;
+    while (@_) {
+        my $k = shift;
+        my $v = shift // $default{$k};
+        if ($k eq 'global_timeout') {
+            if (defined (my $gt = shift)) {
+                $pool->{max_conn_time} += $gt - $pool->{global_timeout}
+                    if defined $pool->{max_conn_time};
+            }
+            else {
+                delete $pool->{max_conn_time};
+            }
+            $pool->{$k} = $v;
+        }
+    }
+}
 
 sub _on_start {}
 
@@ -589,7 +612,7 @@ number of seconds, it is considered dead and closed.
 
 =item global_timeout => $seconds
 
-When all the connections to the database become broken and is not
+When all the connections to the database become broken and it is not
 possible to stablish a new connection for the given time period the
 pool is considered dead and the C<on_error> callback will be called.
 
@@ -708,6 +731,17 @@ The arguments passed to the callback are the pool object and the
 channel selector.
 
 =back
+
+=item $bool = $pool->is_dead
+
+Returns a true value if the pool object has been marked as dead.
+
+=item $pool->set($param1 => $value1, $param2 => $value2, ...);
+
+Changes the values of pool parameters.
+
+See the constructor documentation for the list of parameters that can
+be changed.
 
 =back
 
