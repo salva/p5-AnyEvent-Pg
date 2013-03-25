@@ -22,10 +22,10 @@ else {
         plan skip_all => "Unable to load Test::postgresql: $@";
     }
 
-    $tpg = Test::postgresql->new;
+    $tpg = eval { Test::postgresql->new };
     unless ($tpg) {
         no warnings;
-        plan skip_all => "Test::postgresql failed to provide a database instance: $Test::postgresql::errstr";
+        plan skip_all => "Test::postgresql failed to provide a database instance: $@";
     }
 
 
