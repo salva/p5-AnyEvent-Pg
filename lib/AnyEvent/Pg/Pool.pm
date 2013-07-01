@@ -32,7 +32,7 @@ sub _debug {
 }
 
 my %default = ( connection_retries => 3,
-                connection_dealy => 2,
+                connection_delay => 2,
                 timeout => 30,
                 size => 1 );
 
