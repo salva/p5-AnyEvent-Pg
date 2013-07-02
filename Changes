@@ -1,5 +1,9 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.11  Jul 2, 2013
+       - add support for priorizing queries
+       - add initialization queries
+
 0.10  Mar 25, 2013
        - add support for set method that allows to change pool
          parameters after creation
