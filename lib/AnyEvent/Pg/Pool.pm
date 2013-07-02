@@ -112,12 +112,14 @@ sub push_query {
 
     my $queue = ($opts{initialization} ? ($pool->{init_queue} //= []) : $pool->{queue});
     if (defined(my $priority = $query{priority})) {
+        # FIXME: improve the search algorithm used here
         my $i;
         for ($i = 0; $i < @$queue; $i++) {
             my $p2 = $queue->[$i]{priority} // last;
             $p2 >= $priority or last;
         }
         splice @$queue, $i, 0, $query;
+        $debug and $debug & 8 and $pool->_debug("query with priority $priority inserted into queue at position $i/$#$queue");
     }
     else {
         push @$queue, $query;
