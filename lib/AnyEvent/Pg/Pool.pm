@@ -516,7 +516,7 @@ sub _on_conn_connect_error {
     }
 
     # giving up!
-    $debug and $debug & 8 and $pool->_debug("it has been imposible to connect to the database, giving up!!!");
+    $debug and $debug & 8 and $pool->_debug("it has been impossible to connect to the database, giving up!!!");
     $pool->{dead} = 1;
 
     # processing continues on the on_conn_error callback
@@ -637,8 +637,8 @@ AnyEvent::Pg::Pool
   *******************************************************************
 
 This module handles a pool of databases connections, and transparently
-handles reconnection and reposting queries on case of network or
-server errors.
+handles reconnection and reposting queries when network and server
+errors occur.
 
 =head2 API
 
@@ -656,7 +656,7 @@ Accepts the following options:
 
 =item size => $size
 
-Maximun number of database connections that can be simultaneously
+Maximum number of database connections that can be simultaneously
 established with the server.
 
 =item connection_retries => $n
@@ -679,7 +679,7 @@ number of seconds, it is considered dead and closed.
 =item global_timeout => $seconds
 
 When all the connections to the database become broken and it is not
-possible to stablish a new connection for the given time period the
+possible to establish a new connection for the given time period the
 pool is considered dead and the C<on_error> callback will be called.
 
 Note that this timeout is approximate. It is checked every time a new
@@ -694,7 +694,7 @@ is invoked.
 
 =item on_connect_error => $callback
 
-When the number of failed reconnection attemps goes over the limit,
+When the number of failed reconnection attempts goes over the limit,
 this callback is called. The pool object and the L<AnyEvent::Pg>
 object representing the last failed attempt are passed as arguments.
 
@@ -740,10 +740,10 @@ the transaction (this is rare, but can happen from time to time).
 
 =item priority => $n
 
-This option allows to priorize queries. The pool distpachs first those
-with a high priority value.
+This option allows to prioritize queries. The pool dispatches first those
+with the highest priority value.
 
-The default priotity is -inf.
+The default priority is -inf.
 
 Queries of equal priority are dispatched in FIFO order.
 
@@ -764,7 +764,7 @@ once pushed, the current API does not allow removing them.
 =back
 
 The callbacks for the C<push_query> method receive as arguments the
-pool object, the underlaying L<AnyEvent::Pg> object actually handling
+pool object, the underlying L<AnyEvent::Pg> object actually handling
 the query and the result object when applicable. For instance:
 
     sub on_result_cb {
@@ -783,7 +783,7 @@ the query and the result object when applicable. For instance:
 =item $w = $pool->listen($channel, %opts)
 
 This method allows to subscribe to the given notification channel and
-receive an event everytime another sends a notification (see
+receive an event every time another sends a notification (see
 PostgreSQL NOTIFY/LISTEN documentation).
 
 The module will take care of keeping an active L<AnyEvent::Pg> connection
@@ -798,11 +798,11 @@ The options accepted by the method are as follow:
 
 =item on_notify => $callback
 
-The given callback will be called everytime some client sends a
+The given callback will be called every time some client sends a
 notification for the selected channel.
 
 The arguments to the callback are the pool object, the channel
-selector and any posible data load passed by the client sending the
+selector and any possible data load passed by the client sending the
 notification.
 
 =item on_listener_started => $callback

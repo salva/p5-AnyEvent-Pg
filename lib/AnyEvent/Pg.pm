@@ -532,7 +532,7 @@ the connection to the database server.
 
 =item on_empty_queue => sub { ... }
 
-This callback is called everytime the query queue becomes empty.
+This callback is called every time the query queue becomes empty.
 
 =item on_notify => sub { ... }
 
@@ -584,7 +584,7 @@ any reason.
 The given callback will be called for every result returned for the
 given query.
 
-You should expect one result object for every SQL statment on the
+You should expect one result object for every SQL statement on the
 query.
 
 The callback will receive as its arguments the AnyEvent::Pg and the
