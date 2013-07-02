@@ -111,7 +111,8 @@ sub push_query {
     my $query = \%query;
 
     my $queue = ($opts{initialization} ? ($pool->{init_queue} //= []) : $pool->{queue});
-    if (defined(my $priority = $query{priority})) {
+    if (defined(my $priority = $opts{priority})) {
+        $query{priority} = $priority;
         # FIXME: improve the search algorithm used here
         my $i;
         for ($i = 0; $i < @$queue; $i++) {
