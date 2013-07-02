@@ -758,6 +758,8 @@ It can be used to set up session parameters. For instance:
   $pool->push_query(initialization => 1,
                     query => "set session time zone 'UTC'");
 
+Pushing initialization queries does not return a watcher object. Also,
+once pushed, the current API does not allow removing them.
 
 =back
 
