@@ -1,6 +1,6 @@
 package AnyEvent::Pg::Pool;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use strict;
 use warnings;
@@ -20,15 +20,16 @@ our $debug;
 
 sub _debug {
     my $pool = shift;
-    my $connecting = keys %{$pool->{connecting}};
-    my $idle       = keys %{$pool->{idle}};
-    my $busy       = keys %{$pool->{busy}};
-    my $delayed    = ($pool->{delay_watcher} ? 1 : 0);
-    my $total      = keys %{$pool->{conns}};
+    my $connecting   = keys %{$pool->{connecting}};
+    my $initializing = keys %{$pool->{initializing}};
+    my $idle         = keys %{$pool->{idle}};
+    my $busy         = keys %{$pool->{busy}};
+    my $delayed      = ($pool->{delay_watcher} ? 1 : 0);
+    my $total        = keys %{$pool->{conns}};
     local ($ENV{__DIE__}, $@);
     my ($pkg, $file, $line, $method) = (caller 0);
     $method =~ s/.*:://;
-    warn "[$pool c:$connecting/i:$idle/b:$busy|t:$total|d:$delayed]\@${pkg}::$method> @_ at $file line $line\n";
+    warn "[$pool c:$connecting/i:$initializing/-:$idle/b:$busy|t:$total|d:$delayed]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
 my %default = ( connection_retries => 3,
@@ -73,7 +74,7 @@ sub new {
                  listeners_by_conn => {},
                };
     bless $pool, $class;
-    AE::postpone { $pool->_on_start };
+    &AE::postpone(weak_method_callback($pool, '_on_start'));
     $pool;
 }
 
@@ -127,16 +128,26 @@ sub push_query {
     }
 
     if ($opts{initialization}) {
-        AE::postpone { $pool->_check_init_queue_idle };
+        &AE::postpone(weak_method_callback($pool, '_check_init_queue_idle'));
         $debug and $debug & 8 and $pool->_debug('initialization query pushed into queue, queue size is now ' . scalar @$queue);
     }
     else {
-        AE::postpone { $pool->_check_queue };
+        &AE::postpone(weak_method_callback($pool, '_check_queue'));
         $debug and $debug & 8 and $pool->_debug('query pushed into queue, raw queue size is now ' . scalar @$queue);
         return AnyEvent::Pg::Pool::QueryWatcher->_new($query)
             if defined wantarray;
     }
     ()
+}
+
+sub _postponed_on_listener_started_callback {
+    my ($pool, $callback, $channel) = @_;
+    # at this point, even if unlikey, the listener may be
+    # not in state 'running' anymore, but we ignore that
+    # possibility as the on_listener_started is just a
+    # hint.
+    $pool->_maybe_callback($callback, 'on_listener_started', $channel)
+        unless $callback->{cancelled};
 }
 
 sub listen {
@@ -156,14 +167,7 @@ sub listen {
     if (my $listener = $lbc->{$channel}) {
         push @{$listener->{callbacks}}, $callback;
         if ($listener->{state} eq 'running') {
-            AE::postpone {
-                # at this point, even if unlikey, the listener may be
-                # not in state 'running' anymore, but we ignore that
-                # possibility as the on_listener_started is just a
-                # hint.
-                $pool->_maybe_callback($callback, 'on_listener_started', $channel)
-                    unless $callback->{cancelled};
-            };
+            &AE::postpone(weak_method_callback($pool, '_postponed_on_listener_started_callback', $callback, $channel));
         }
     }
     else {
@@ -401,6 +405,7 @@ sub _start_new_conn {
         $pool->{conn_retries} <= $pool->{max_conn_retries} and
         !$pool->{delay_watcher}) {
         my $seq = $pool->{seq}++;
+        $debug and $debug & 8 and $pool->_debug("starting new connection, seq: $seq");
         my $conn = AnyEvent::Pg->new($pool->{conninfo},
                                      timeout => $pool->{timeout},
                                      on_connect => weak_method_callback($pool, '_on_conn_connect', $seq),

@@ -1,5 +1,11 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.12  Jul 16, 2013
+       - in some cases, on_connect_error callback was being called
+         from the constructor
+       - use weak callbacks for all the AE::postpone() invocations
+       - better debugging
+
 0.11  Jul 2, 2013
        - add support for priorizing queries
        - add initialization queries

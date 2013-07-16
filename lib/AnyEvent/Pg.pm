@@ -1,6 +1,6 @@
 package AnyEvent::Pg;
 
-our $VERSION = 0.11;
+our $VERSION = 0.12;
 
 use 5.010;
 use strict;
@@ -8,7 +8,7 @@ use warnings;
 use Carp;
 
 use AnyEvent;
-use Method::WeakCallback qw(weak_method_callback_cached);
+use Method::WeakCallback qw(weak_method_callback_cached weak_method_callback);
 use Pg::PQ qw(:pgres_polling);
 
 our $debug;
@@ -72,9 +72,7 @@ sub new {
                  call_on_empty_queue => 1,
                };
     bless $self, $class;
-
-    $self->_connectPoll;
-
+    &AE::postpone(weak_method_callback($self, '_connectPoll'));
     $self;
 }
 
@@ -244,12 +242,15 @@ sub _push_query {
 
     $self->{call_on_empty_queue} = 1;
 
-    $self->{current_query} or AE::postpone {
-        $debug and $debug & 4 and $self->_debug("postponed call to _on_push_query");
-        $self->_on_push_query;
-    };
+    $self->{current_query} or &AE::postpone(weak_method_callback_cached($self, '_on_postponed_push_query'));
 
     AnyEvent::Pg::Watcher->_new($query);
+}
+
+sub _on_postponed_push_query {
+    my $self = shift;
+    $debug and $debug & 4 and $self->_debug("postponed call to _on_push_query");
+    $self->_on_push_query
 }
 
 sub queue_size {
