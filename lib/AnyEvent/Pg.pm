@@ -194,9 +194,9 @@ sub _on_fatal_error {
 
     my $cq = delete $self->{current_query};
     $cq and $self->_maybe_callback($cq, 'on_error');
-    my $queue = $self->{queue};
-    $self->_maybe_callback($_, 'on_error') for @$queue;
-    @$queue = ();
+    my $queries = $self->{queries};
+    $self->_maybe_callback($_, 'on_error') for @$queries;
+    @$queries = ();
     $self->_maybe_callback('on_error', 1);
     $self->{dbc}->finish;
     delete $self->{dbc};
