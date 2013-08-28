@@ -1,5 +1,10 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.13  Aug 28, 2013
+       - on_error callbacks were not being called on fatal errors
+         breaking the connection (bug report and patch by Pavel
+         Shaydo)
+
 0.12  Jul 16, 2013
        - in some cases, on_connect_error callback was being called
          from the constructor
