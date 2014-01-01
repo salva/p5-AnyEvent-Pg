@@ -7,6 +7,7 @@ WriteMakefile( NAME          => 'AnyEvent::Pg',
                PREREQ_PM     => { 'Pg::PQ'   => '0.06',
                                   'AnyEvent' => '5.34',
                                   'Method::WeakCallback' => '0.01' },
+               TEST_REQUIRES => { 'Test::FailWarnings' => 0 },
                ABSTRACT_FROM => 'lib/AnyEvent/Pg.pm',
                AUTHOR        => 'Salvador Fandino <sfandino@yahoo.com>'
              );

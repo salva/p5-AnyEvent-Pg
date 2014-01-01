@@ -3,6 +3,8 @@
 use strict;
 use warnings;
 use 5.010;
+use Test::More;
+use Test::FailWarnings;
 
 # use Devel::FindRef;
 
@@ -10,7 +12,6 @@ $| = 1;
 use Pg::PQ qw(:pgres);
 use AnyEvent::Pg;
 use AnyEvent::Pg::Pool;
-use Test::More;
 
 my ($ci, $tpg, $port);
 
