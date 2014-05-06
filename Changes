@@ -1,5 +1,9 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.14  May 6, 2014
+       - remove usage of given/when construction that is experimental
+         now
+
 0.13  Aug 28, 2013
        - on_error callbacks were not being called on fatal errors
          breaking the connection (bug report and patch by Pavel

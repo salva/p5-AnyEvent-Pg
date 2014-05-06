@@ -1,6 +1,6 @@
 package AnyEvent::Pg::Pool;
 
-our $VERSION = '0.12';
+our $VERSION = '0.14';
 
 use strict;
 use warnings;
@@ -866,7 +866,7 @@ Salvador FandiE<ntilde>o, E<lt>sfandino@yahoo.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2012, 2013 by Qindel FormaciE<oacute>n y Servicios S.L.
+Copyright (C) 2012-2014 by Qindel FormaciE<oacute>n y Servicios S.L.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
