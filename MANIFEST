@@ -7,4 +7,3 @@ Makefile.PL
 MANIFEST
 README
 t/AnyEvent-Pg.t
-t/pod.t
