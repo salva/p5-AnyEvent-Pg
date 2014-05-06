@@ -100,21 +100,20 @@ sub _connectPoll {
     }
 
     $debug and $debug & 1 and $self->_debug("wants to: $r");
-    given ($r) {
-        when (PGRES_POLLING_READING) {
-            $rw = $self->{read_watcher} // AE::io $fd, 0, weak_method_callback_cached($self, '_connectPoll');
-            # say "fd: $fd, read_watcher: $rw";
-        }
-        when (PGRES_POLLING_WRITING) {
-            $ww = $self->{write_watcher} // AE::io $fd, 1, weak_method_callback_cached($self, '_connectPoll');
-            # say "fd: $fd, write_watcher: $ww";
-        }
-        when (PGRES_POLLING_FAILED) {
-            $goto = '_on_connect_error';
-        }
-        when ([PGRES_POLLING_OK, PGRES_POLLING_ACTIVE]) {
-            $goto = '_on_connect';
-        }
+    if    ($r == PGRES_POLLING_READING) {
+        $rw = $self->{read_watcher} // AE::io $fd, 0, weak_method_callback_cached($self, '_connectPoll');
+        # say "fd: $fd, read_watcher: $rw";
+    }
+    elsif ($r == PGRES_POLLING_WRITING) {
+        $ww = $self->{write_watcher} // AE::io $fd, 1, weak_method_callback_cached($self, '_connectPoll');
+        # say "fd: $fd, write_watcher: $ww";
+    }
+    elsif ($r == PGRES_POLLING_FAILED) {
+        $goto = '_on_connect_error';
+    }
+    elsif ($r == PGRES_POLLING_OK or
+           $r == PGRES_POLLING_ACTIVE) {
+        $goto = '_on_connect';
     }
     $self->{read_watcher} = $rw;
     $self->{write_watcher} = $ww;
@@ -210,25 +209,23 @@ sub _push_query {
     my $type = $query{type} = delete $opts{_type};
     $debug and $debug & 1 and $self->_debug("pushing query of type $type");
     $query{$_} = delete $opts{$_} for qw(on_result on_error on_done on_timeout);
-    given ($type) {
-        when ('query') {
-            my $query = delete $opts{query};
-            my $args = delete $opts{args};
-            $query{args} = [_ensure_list($query), ($args ? @$args : ())];
-        }
-        when ('query_prepared') {
-            my $name = delete $opts{name} // croak "name argument missing";
-            my $args = delete $opts{args};
-            $query{args} = [_ensure_list($name), ($args ? @$args : ())];
-        }
-        when ('prepare') {
-            my $name = delete $opts{name} // croak "name argument missing";
-            my $query = delete $opts{query} // croak "query argument missing";
-            $query{args} = [$name, $query];
-        }
-        default {
-            die "internal error: unknown push_query type $_";
-        }
+    if    ($type eq 'query') {
+        my $query = delete $opts{query};
+        my $args = delete $opts{args};
+        $query{args} = [_ensure_list($query), ($args ? @$args : ())];
+    }
+    elsif ($type eq 'query_prepared') {
+        my $name = delete $opts{name} // croak "name argument missing";
+        my $args = delete $opts{args};
+        $query{args} = [_ensure_list($name), ($args ? @$args : ())];
+    }
+    elsif ($type eq 'prepare') {
+        my $name = delete $opts{name} // croak "name argument missing";
+        my $query = delete $opts{query} // croak "query argument missing";
+        $query{args} = [$name, $query];
+    }
+    else {
+        die "internal error: unknown push_query type $type";
     }
     %opts and croak "unsupported option(s) ".join(", ", keys %opts);
 
@@ -354,23 +351,22 @@ sub _on_push_query_flushable {
     undef $self->{timeout_watcher};
 
     $debug and $debug & 1 and $self->_debug("flushing");
-    given ($dbc->flush) {
-        when (-1) {
-            $self->_on_fatal_error;
-        }
-        when (0) {
-            $debug and $debug & 1 and $self->_debug("flushed");
-            $self->_on_consume_input;
-        }
-        when (1) {
-            $debug and $debug & 1 and $self->_debug("wants to write");
-            $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, weak_method_callback_cached($self, '_on_push_query_flushable');
-            $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_on_timeout')
-                if $self->{timeout};
-        }
-        default {
-            die "internal error: flush returned $_";
-        }
+    my $flush = $dbc->flush;
+    if   ($flush == -1) {
+        $self->_on_fatal_error;
+    }
+    elsif ($flush == 0) {
+        $debug and $debug & 1 and $self->_debug("flushed");
+        $self->_on_consume_input;
+    }
+    elsif ($flush == 1) {
+        $debug and $debug & 1 and $self->_debug("wants to write");
+        $self->{write_watcher} = $ww // AE::io $self->{fd}, 1, weak_method_callback_cached($self, '_on_push_query_flushable');
+        $self->{timeout_watcher} = AE::timer $self->{timeout}, 0, weak_method_callback_cached($self, '_on_timeout')
+            if $self->{timeout};
+    }
+    else {
+        die "internal error: flush returned $flush";
     }
 }
 
