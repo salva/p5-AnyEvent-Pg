@@ -5,6 +5,7 @@ our $VERSION = 0.14;
 use 5.010;
 use strict;
 use warnings;
+no warnings 'experimental';
 use Carp;
 
 use AnyEvent;
