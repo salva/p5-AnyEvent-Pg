@@ -1,6 +1,6 @@
 package AnyEvent::Pg;
 
-our $VERSION = 0.14;
+our $VERSION = 0.15;
 
 use 5.010;
 use strict;
@@ -267,6 +267,8 @@ sub unshift_query { shift->_push_query(_type => 'query', _unshift => 1, @_) }
 
 sub unshift_query_prepared { shift->_push_query(_type => 'query_prepared', _unshift => 1, @_) }
 
+sub last_query_start_time { shift->{query_start_time} }
+
 sub _on_push_query {
     my $self = shift;
     $debug and $debug & 4 and $self->_debug("_on_push_query");
@@ -331,6 +333,7 @@ sub _on_push_query_writable {
         my $args = "'" . join("', '", @{$query->{args}}) . "'";
         $self->_debug("calling $method($args)");
     }
+    $self->{query_start_time} = AE::now;
     if ($dbc->$method(@{$query->{args}})) {
         $self->{current_query} = $query;
         $self->_on_push_query_flushable;
@@ -672,6 +675,10 @@ Returns the number of queries queued for execution.
 
 Closes the connection to the database and frees the associated
 resources.
+
+=item $adb->last_query_start_time
+
+Returns the time at which processing for the last query started.
 
 =back
 
