@@ -18,14 +18,14 @@ if (defined $ENV{TEST_ANYEVENT_PG_CONNINFO}) {
     $ci = $ENV{TEST_ANYEVENT_PG_CONNINFO};
 }
 else {
-    unless (eval { require Test::postgresql; 1 }) {
-        plan skip_all => "Unable to load Test::postgresql: $@";
+    unless (eval { require Test::PostgreSQL; 1 }) {
+        plan skip_all => "Unable to load Test::PostgreSQL: $@";
     }
 
-    $tpg = eval { Test::postgresql->new };
+    $tpg = eval { Test::PostgreSQL->new };
     unless ($tpg) {
         no warnings;
-        plan skip_all => "Test::postgresql failed to provide a database instance: $@";
+        plan skip_all => "Test::PostgreSQL failed to provide a database instance: $@";
     }
 
 
@@ -54,6 +54,9 @@ sub ok_query {
                                  $queued--;
                              },
                              on_done  => sub {
+                                 ok(defined $_[0]->last_query_start_time);
+                                 diag "last query start time: ", $_[0]->last_query_start_time, ", now: ", AE::now;
+
                                  ok($ok, "query '@query'");
                                  $queued--;
                              },
@@ -129,7 +132,7 @@ sub ok_query_prepared {
 #
 
 
-plan tests => 22;
+plan tests => 28;
 diag "conninfo: " . Pg::PQ::Conn::_make_conninfo($ci);
 
 my $timer;
