@@ -5,7 +5,7 @@ use warnings;
 
 use ExtUtils::MakeMaker;
 
-my %prereq_pm = ( 'Pg::PQ'   => '0.06',
+my %prereq_pm = ( 'Pg::PQ'   => '0.14',
                   'AnyEvent' => '5.34',
                   'Method::WeakCallback' => '0.01' );
 
