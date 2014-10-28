@@ -55,7 +55,7 @@ sub ok_query {
                              },
                              on_done  => sub {
                                  ok(defined $_[0]->last_query_start_time);
-                                 diag "last query start time: ", $_[0]->last_query_start_time, ", now: ", AE::now;
+                                 # diag "last query start time: ", $_[0]->last_query_start_time, ", now: ", AE::now;
 
                                  ok($ok, "query '@query'");
                                  $queued--;
