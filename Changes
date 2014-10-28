@@ -1,5 +1,12 @@
 Revision history for Perl extension AnyEvent::Pg.
 
+0.15  Oct 28, 2014
+        - add AnyEvent::Pg method last_query_start_time (feature
+          request by Yoran Heling)
+        - use Test::PostgreSQL instead of Test::postgresql for testing
+        - set Test::PostgreSQL as required when
+          $ENV{AUTOMATED_TESTING} is set
+
 0.14  May 6, 2014
        - remove usage of given/when construction that is experimental
          now
