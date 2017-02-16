@@ -24,12 +24,13 @@ sub _debug {
     my $initializing = keys %{$pool->{initializing}};
     my $idle         = keys %{$pool->{idle}};
     my $busy         = keys %{$pool->{busy}};
+    my $begin        = keys %{$pool->{begin}};
     my $delayed      = ($pool->{delay_watcher} ? 1 : 0);
     my $total        = keys %{$pool->{conns}};
     local ($ENV{__DIE__}, $@);
     my ($pkg, $file, $line, $method) = (caller 0);
     $method =~ s/.*:://;
-    warn "[$pool c:$connecting/i:$initializing/-:$idle/b:$busy|t:$total|d:$delayed]\@${pkg}::$method> @_ at $file line $line\n";
+    warn "[$pool c:$connecting/i:$initializing/-:$idle/b:$busy|t:$total|d:$delayed|x:$begin]\@${pkg}::$method> @_ at $file line $line\n";
 }
 
 my %default = ( connection_retries => 3,
@@ -66,6 +67,8 @@ sub new {
                  idle => {},
                  connecting => {},
                  initializing => {},
+                 stolen => {},
+                 thieves => {},
                  init_queue_ix => {},
                  queue => [],
                  seq => 1,
@@ -107,7 +110,7 @@ sub push_query {
     $retry_on_sqlstate = { map { $_ => 1 } @$retry_on_sqlstate }
         if ref($retry_on_sqlstate) eq 'ARRAY';
     $query{retry_on_sqlstate} = $retry_on_sqlstate // {};
-    $query{$_} = delete $opts{$_} for qw(on_result on_error on_done query args max_retries);
+    $query{$_} = delete $opts{$_} for qw(on_result on_error on_done on_steal query args max_retries begin_txn);
     $query{seq} = $pool->{query_seq}++;
     my $query = \%query;
 
@@ -387,6 +390,7 @@ sub _requeue_query {
 
 sub _on_query_done {
     my ($pool, $seq, $conn) = @_;
+
     my $query = delete $pool->{current}{$seq};
     if (delete $query->{retry}) {
         $debug and $debug & 8 and $pool->_debug("unshifting failed query into queue");
@@ -394,7 +398,14 @@ sub _on_query_done {
         $pool->_requeue_query($query);
     }
     else {
-        $pool->_maybe_callback($query, 'on_done', $conn);
+        if ($query->{begin}) {
+            $pool->{begin}{$seq} = $query;
+            $query->{txn} = AnyEvent::Pg::Txn->_new($pool, $seq);
+            $pool->_maybe_callback($pool, 'on_begin_txn', $query->{txn});
+        }
+        else {
+            $pool->_maybe_callback($query, 'on_done', $conn);
+        }
     }
 }
 
@@ -567,6 +578,11 @@ sub _on_conn_empty_queue {
     my ($pool, $seq, $conn) = @_;
     $debug and $debug & 8 and $pool->_debug("conn $conn queue is now empty, seq: $seq");
 
+    if (my $thief = $pool->{thieves}{$seq}) {
+        $thief->_on_empty_queue;
+        return;
+    }
+
     unless (delete $pool->{busy}{$seq} or
             delete $pool->{connecting}{$seq} or
             delete $pool->{initializing}{$seq}) {
@@ -584,6 +600,45 @@ sub _on_conn_empty_queue {
     $pool->_check_queue;
 }
 
+package AnyEvent::Pg::Tx;
+
+sub _new {
+    my ($class, $pool, $seq) = @_;
+    my $tx = { pool => $pool,
+               seq => $seq,
+               open => 1 };
+    bless $self, $class;
+}
+
+sub _push {
+    my ($tx, $query) = @_;
+    if ($tx->{open}) {
+        my $pool = $tx->{pool};
+        my $seq = $tx->{seq};
+        my $conn = $pool->{conn}{$seq};
+
+        $conn->push_query($query);
+    }
+    else {
+        $tx->_maybe_callback($query, 'on_error')
+        die "push called on closed transaction";
+    }
+}
+
+sub push_queue {
+    my ($tx, %opts) = @_;
+    my %query;
+    $query{$_} = delete $opts{$_} for qw(on_result on_error on_done on_timeout);
+    $tx->_push(\%query);
+}
+
+sub push_commit {
+
+}
+
+sub push_rollback {
+
+}
 
 package AnyEvent::Pg::Pool::Watcher;
 
